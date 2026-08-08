@@ -1,0 +1,324 @@
+substitutions:
+  device_name: "air-quality-monitor"
+  friendly_name: "Air Quality Monitor"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: 600
+      then:
+        - delay: 1500ms
+    - priority: -100
+      then:
+        - lambda: |-
+            id(stay_on) = false;
+            id(display_on) = true;
+            id(wake_timestamp) = millis();
+        - script.execute: display_auto_off
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: arduino
+
+logger:
+  level: NONE
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: light
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+i2c:
+  sda: GPIO6
+  scl: GPIO7
+  frequency: 100kHz
+  scan: true
+  sda_pullup_enabled: false
+  scl_pullup_enabled: false
+
+# ---------------------------------------------------------------------------
+# Senzory (interval 60s pro úsporu baterie)
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: scd4x
+    address: 0x62
+    update_interval: 60s
+    automatic_self_calibration: true
+    altitude_compensation: 435m
+    co2:
+      name: "CO2"
+      id: co2_sensor
+    temperature:
+      name: "Temperature (SCD41)"
+      id: temp_scd41
+    humidity:
+      name: "Humidity"
+      id: humidity_scd41
+
+  - platform: bmp085
+    address: 0x77
+    update_interval: 60s
+    temperature:
+      name: "Temperature (BMP180)"
+      id: temp_bmp180
+    pressure:
+      name: "Pressure"
+      id: pressure_bmp180
+
+  # Napětí baterky přes externí dělič 220kΩ (BAT+) + 100kΩ (GND), tap -> GPIO4
+  # Software multisampling (30 rychlých čtení zprůměrovaných) místo hardwarového
+  # vyhlazovacího kondenzátoru - kompenzuje šum z vysokoimpedančního děliče.
+  - platform: template
+    name: "Battery Voltage"
+    id: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      float sum_mv = 0;
+      const int samples = 30;
+      for (int i = 0; i < samples; i++) {
+        sum_mv += analogReadMilliVolts(4);  // GPIO4, kalibrováno čipovou fuse hodnotou
+      }
+      float avg_v = (sum_mv / samples) / 1000.0;
+      return avg_v * 3.2;  // korekce podle děliče (220k+100k)/100k
+
+  # Orientační % baterky (lineární odhad 3.0V = 0 %, 4.2V = 100 %)
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    device_class: battery
+    update_interval: 60s
+    lambda: |-
+      float v = id(battery_voltage).state;
+      float pct = (v - 3.0) / (4.2 - 3.0) * 100.0;
+      if (pct > 100) pct = 100;
+      if (pct < 0) pct = 0;
+      return pct;
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_big
+    size: 16
+    glyphs: "0123456789.-%"
+  - file: "gfonts://Roboto"
+    id: font_label
+    size: 10
+
+# ---------------------------------------------------------------------------
+# Displej optimalizovaný pro výšku 32px (bez ořezávání)
+# ---------------------------------------------------------------------------
+display:
+  - platform: ssd1306_i2c
+    id: oled_display
+    address: 0x3C
+    model: "SSD1306 128x32"
+    update_interval: 1s
+    lambda: |-
+      if (!id(display_on)) return;
+
+      static uint32_t boot_start = millis();
+
+      bool has_co2  = id(co2_sensor).has_state();
+      bool has_t1   = id(temp_scd41).has_state();
+      bool has_hum  = id(humidity_scd41).has_state();
+      bool has_t2   = id(temp_bmp180).has_state();
+      bool has_pres = id(pressure_bmp180).has_state();
+
+      int ready = (int)has_co2 + (int)has_t1 + (int)has_hum + (int)has_t2 + (int)has_pres;
+      bool timed_out = (millis() - boot_start) > 15000;
+
+      if (ready < 5 && !timed_out) {
+        // Čistý loading bar uprostřed výšky 32px
+        const int bar_x = 10, bar_y = 10, bar_w = 108, bar_h = 12;
+        it.rectangle(bar_x, bar_y, bar_w, bar_h);
+        
+        int fill_w = (bar_w - 2) * ready / 5;
+        if (fill_w > 0) {
+          it.filled_rectangle(bar_x + 1, bar_y + 1, fill_w, bar_h - 2);
+        }
+
+      } else {
+        const int page_count = 5;
+        int page = (millis() / 3000) % page_count;
+
+        const char *label;
+        char value_buf[8];
+        const char *unit;
+
+        switch (page) {
+          case 0:
+            label = "CO2";
+            unit = "ppm";
+            if (has_co2) snprintf(value_buf, sizeof(value_buf), "%.0f", id(co2_sensor).state);
+            else         snprintf(value_buf, sizeof(value_buf), "--");
+            break;
+          case 1:
+            label = "TEPLOTA";
+            unit = "C";
+            if (has_t1) snprintf(value_buf, sizeof(value_buf), "%.1f", id(temp_scd41).state);
+            else        snprintf(value_buf, sizeof(value_buf), "--");
+            break;
+          case 2:
+            label = "VLHKOST";
+            unit = "%";
+            if (has_hum) snprintf(value_buf, sizeof(value_buf), "%.0f", id(humidity_scd41).state);
+            else         snprintf(value_buf, sizeof(value_buf), "--");
+            break;
+          case 3:
+            label = "TLAK";
+            unit = "hPa";
+            if (has_pres) snprintf(value_buf, sizeof(value_buf), "%.0f", id(pressure_bmp180).state);
+            else          snprintf(value_buf, sizeof(value_buf), "--");
+            break;
+          default:
+            label = "TEPLOTA 2";
+            unit = "C";
+            if (has_t2) snprintf(value_buf, sizeof(value_buf), "%.1f", id(temp_bmp180).state);
+            else        snprintf(value_buf, sizeof(value_buf), "--");
+            break;
+        }
+
+        // 1. Levá strana: Název veličiny (nahoře)
+        it.print(2, 0, id(font_label), label);
+
+        // 2. Pravá strana: Indikátor stavu zapnutí / odpočtu (nahoře)
+        if (id(stay_on)) {
+          it.print(94, 0, id(font_label), "[STAY]");
+        } else {
+          uint32_t elapsed = (millis() - id(wake_timestamp)) / 1000;
+          int remaining = 30 - (int)elapsed;
+          if (remaining < 0) remaining = 0;
+          char time_buf[8];
+          snprintf(time_buf, sizeof(time_buf), "%ds", remaining);
+          it.print(102, 0, id(font_label), time_buf);
+        }
+
+        // 3. Hlavní hodnota + jednotka (uloženo bezpečně uprostřed, aby nic nepřebývalo)
+        int vx1, vy1, vw, vh;
+        it.get_text_bounds(2, 11, value_buf, id(font_big), TextAlign::TOP_LEFT, &vx1, &vy1, &vw, &vh);
+        it.print(2, 11, id(font_big), value_buf);
+        it.print(2 + vw + 3, 11 + vh - 10, id(font_label), unit);
+
+        // 4. Pravý dolní roh: Bezpečné přepínače stránek (neřezané)
+        for (int i = 0; i < page_count; i++) {
+          int x = 90 + (i * 7);
+          int y = 28;
+          if (i == page) {
+            it.filled_rectangle(x, y, 4, 3);
+          } else {
+            it.rectangle(x, y, 4, 3);
+          }
+        }
+
+        // 5. Napětí baterky - vycentrováno mezi countdown/[STAY] nahoře a tečkami dole, přepíná V / % po 2.5 tečky
+        if (id(battery_voltage).has_state()) {
+          char batt_buf[8];
+          uint32_t cycle_len = page_count * 3000;  // celý cyklus přes všech 5 teček = 15000ms
+          uint32_t cycle_pos = millis() % cycle_len;
+          bool show_percent = cycle_pos >= (cycle_len / 2);  // přepne po 2.5 tečce
+          if (show_percent && id(battery_level).has_state()) {
+            snprintf(batt_buf, sizeof(batt_buf), "%.0f%%", id(battery_level).state);
+          } else {
+            snprintf(batt_buf, sizeof(batt_buf), "%.2fV", id(battery_voltage).state);
+          }
+          it.print(106, 19, id(font_label), TextAlign::CENTER, batt_buf);
+        }
+      }
+
+globals:
+  - id: stay_on
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: display_on
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  - id: wake_timestamp
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+script:
+  - id: display_auto_off
+    mode: restart
+    then:
+      - delay: 30s
+      - if:
+          condition:
+            lambda: "return !id(stay_on);"
+          then:
+            - lambda: |-
+                id(display_on) = false;
+                id(oled_display).turn_off();
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO3
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "OLED Button"
+    id: oled_button
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_multi_click:
+      # DVOJKLIK: Trvalé zapnutí / Vypnutí trvalého režimu
+      - timing:
+          - ON for at most 1.0s
+          - OFF for at most 0.4s
+          - ON for at most 1.0s
+          - OFF for at least 0.2s
+        then:
+          - script.stop: display_auto_off
+          - lambda: |-
+              if (id(stay_on)) {
+                id(stay_on) = false;
+                id(display_on) = true;
+                id(wake_timestamp) = millis();
+                id(display_auto_off)->execute();
+              } else {
+                id(stay_on) = true;
+                id(display_on) = true;
+                id(oled_display).turn_on();
+              }
+
+      # JEDNO KLIKNUTÍ: Pokud svítí, vypne ho. Pokud nesvítí, zapne na 30s.
+      - timing:
+          - ON for at most 1.0s
+          - OFF for at least 0.4s
+        then:
+          - lambda: |-
+              if (id(display_on)) {
+                id(display_on) = false;
+                id(stay_on) = false;
+                id(display_auto_off)->stop();
+                id(oled_display).turn_off();
+              } else {
+                id(display_on) = true;
+                id(stay_on) = false;
+                id(wake_timestamp) = millis();
+                id(oled_display).turn_on();
+                id(display_auto_off)->execute();
+              }
