@@ -2,7 +2,10 @@
 
 Bateriový monitor kvality vzduchu postavený na Seeed XIAO ESP32-C3, běžící na [ESPHome](https://esphome.io/) a integrovaný do Home Assistant. Měří CO₂, teplotu, vlhkost a tlak, s malým OLED displejem pro stav a tlačítkem pro probuzení / trvalé zapnutí.
 
-<img src="images/final.webp" width="400">
+<p align="center">
+  <img src="images/final.webp" width="400">
+</p>
+
 
 ## Funkce
 
@@ -28,7 +31,7 @@ Bateriový monitor kvality vzduchu postavený na Seeed XIAO ESP32-C3, běžící
 | Tlačítko | Připojeno na GPIO3 |
 | Rezistory 220kΩ + 100kΩ | Dělič napětí baterky (BAT+ → GPIO4 → GND) |
 | Rezistory 4.7kΩ x2 | Externí I2C pull-upy na SDA a SCL |
-| 3D tištěný kryt (PLA) | Viz [`enclosure/case.3mf`](enclosure/case.3mf) |
+| 3D tištěný kryt (PLA) | Viz [`enclosure/README.md`](enclosure/README.md) |
 
 ## Zapojení
 
@@ -50,7 +53,7 @@ fallback_ap_password: "your-fallback-password"
 
 ## Kryt
 
-3D tištěný z PLA. Zdrojový soubor: [`enclosure/case.3mf`](enclosure/case.3mf). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).
+3D tištěný z PLA. Zdrojový soubor: [`enclosure/README.md`](enclosure/README.md). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).
 
 ## Baterie
 
