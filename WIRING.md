@@ -18,16 +18,18 @@ I2C sběrnice běží na 100kHz. Interní pull-upy ESP jsou vypnuté (`sda_pullu
 ## Dělič napětí baterky
 
 ```
-BAT+ (XIAO) ──[220kΩ]──┬──[100kΩ]── BAT- (XIAO) / GND
-                        │
-                      GPIO4
+B+ (baterka, přímo) ──[220kΩ]──┬──[100kΩ]── BAT- (XIAO) / GND
+                                │
+                              GPIO4
 ```
 
-Dělič je zapojený na **BAT+/BAT- piny XIAO desky**, tedy AŽ ZA TP4056 modulem (za OUT+/OUT-), ne přímo na svorky baterky (B+/B-). Prakticky to znamená, že dělič (a stejně tak GND celého XIAO) sedí na té straně ochranného obvodu TP4056 (DW01A + FS8205A), která se při zásahu ochrany (např. hluboké vybití) odpojí od baterky.
+**v2 změna:** horní noha děliče (220kΩ) je teď zapojená **přímo na kladnou svorku baterky (B+)**, ne na BAT+ pin XIAO desky/OUT+ TP4056 jako v v1 - obchází tak jakýkoli (byť malý) úbytek na trase přes modul a jeho konektory. Dolní noha (100kΩ) a referenční GND pro GPIO4 zůstávají beze změny na **XIAO GND** (= OUT- TP4056), takže záporná reference děliče je pořád za ochranným obvodem TP4056 (DW01A + FS8205A), stejně jako v v1.
 
-Za normálního provozu (mimo zásah ochrany) je to bezvýznamné: ochranný FET má v sepnutém stavu odpor jen v řádu desítek miliohmů, takže úbytek napětí na něm je při běžném odběru zařízení zanedbatelný (jednotky mV) vůči tomu, co se měří (napětí baterky v řádu voltů, změny při nabíjení v řádu desítek až stovek mV). Detekce nabíjení z IR poklesu (viz níže) funguje spolehlivě i takhle, protože nabíjecí proud protéká přímo vnitřním odporem článku, ne přes tuhle větev.
+Za normálního provozu (ochranný FET sepnutý) je XIAO GND prakticky totožný s B- (rozdíl jen jednotky mV), takže tahle změna nemění běžné měření ani detekci nabíjení - jen dělá horní nohu o chlup přesnější (méně sériové impedance mezi děličem a skutečnou svorkou článku).
 
-Výjimka nastává při zásahu ochrany: pokud DW01A vyhodnotí hluboké vybití a FS8205A rozpojí OUT-/B-, ztratí celé XIAO (včetně GND, děliče i napájení samotného ESP32) najednou referenci vůči skutečné záporné svorce baterky - zařízení se odpojí od napájení a spadne, dělič se stane plovoucím uzlem. To bylo empiricky pozorováno při vybití pod ~2.5V (viz README, sekce Baterie).
+**Co se NEmění:** při zásahu ochrany (hluboké vybití, FET rozpojí OUT-/B-) ztrácí celé XIAO napájení úplně (jde přes stejnou OUT+/OUT- cestu jako napájení ESP32) a zařízení spadne - to platilo v v1 a platí i teď, protože GND noha děliče pořád sedí za ochranným obvodem. Firmware v tu chvíli prostě neběží a nic neměří, žádná "plovoucí" chybná hodnota se do HA nedostane.
+
+**Skok napětí při zapojení nabíječky** (viz [README Known Issues](README.md#known-issues)) se po tomhle přepojení v praxi výrazně zmenšil/zmizel. To ukazuje, že v1 zapojení (dělič na BAT+ pinu XIAO, tedy až za trasou/kontakty TP4056 modulu) neslo víc sériového odporu, než jen ten vnitřní odpor samotného článku - stačilo pár desítek/stovek mΩ navíc z konektorů/drážky modulu při průchodu nabíjecího proudu, aby se to na skoku znatelně projevilo. Přímé zapojení na svorku článku tuhle přidanou impedanci obchází.
 
 - Poměr děliče: (220k + 100k) / 100k = 3.2
 - Firmware udělá 30 rychlých čtení `analogReadMilliVolts()` na GPIO4, zprůměruje je a pak vynásobí 3.2, aby dopočítal napětí baterky
@@ -126,7 +128,7 @@ graph LR
   BP --> SW1
   SW2 --> T_BP
   T_BN --> BN
-  BATP --> R1
+  BP --> R1
   BATN --> R2
   BATN --> RAIL_GND
 
@@ -140,5 +142,5 @@ Poznámky ke schématu:
 - Všechny tři I2C zařízení sdílí stejný 3V3 a GND rozvod z XIAO.
 - Tlačítko má jeden vývod na GPIO3 a druhý na GND. Interní pull-up na GPIO3 je zapnutý ve firmware a signál je invertovaný, takže pin čte vysokou hodnotu v klidu a nízkou při zmáčknutí.
 - Kladný pól baterky jde přes hlavní vypínač (v2) do B+ TP4056 modulu, záporný pól jde do B- přímo. TP4056 OUT+/OUT- jde na BAT+/BAT- na XIAO, takže nabíjení řeší TP4056 modul, ne přímo XIAO deska.
-- **Dělič napětí (220kΩ/100kΩ) je zapojený na BAT+/BAT- piny XIAO desky, ne přímo na B+/B- baterky.** Horní konec 220kΩ jde na BAT+, spodní konec 100kΩ jde na BAT- (stejný uzel jako GND rozvod celého XIAO). To znamená, že dělič (a GND) sedí za ochranným obvodem TP4056 (mezi B- a OUT- typicky sedí ochranný FET) - viz vysvětlení a důsledky výš v sekci "Dělič napětí baterky".
+- **Dělič napětí (220kΩ/100kΩ): horní konec (220kΩ) je od v2 zapojený přímo na B+ baterky**, ne na BAT+ pin XIAO desky jako v v1. Spodní konec (100kΩ) zůstává na BAT- (stejný uzel jako GND rozvod celého XIAO) - viz vysvětlení a důsledky výš v sekci "Dělič napětí baterky".
 - Odbočka děliče mezi rezistory 220kΩ a 100kΩ je jediné místo připojené na GPIO4.

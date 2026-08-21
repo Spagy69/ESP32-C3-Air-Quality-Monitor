@@ -147,14 +147,19 @@ sensor:
             id(cached_pressure) = x;
             return x;
 
-  # Battery voltage via external divider 220k (BAT+) + 100k (BAT-/GND), tap
-  # -> GPIO4. 30x oversampled to fight the noise a high-impedance divider
-  # picks up (in place of a hardware smoothing cap).
+  # Battery voltage via external divider, tap -> GPIO4. 30x oversampled to
+  # fight the noise a high-impedance divider picks up (in place of a
+  # hardware smoothing cap).
   #
-  # Divider sits on the XIAO's BAT+/BAT- pins (after the TP4056 module's
-  # OUT+/OUT-), not the raw cell terminals - see WIRING.md. Negligible
-  # under normal operation (protection FET is tens of mOhm when closed), so
-  # this still tracks real charge-current-induced voltage rise, which is
+  # v2: the 220k leg connects directly to the cell's B+ terminal (not the
+  # XIAO BAT+ pin/TP4056 OUT+ as in v1) - see WIRING.md. The 100k/GND leg
+  # is still on the XIAO's own GND (= TP4056 OUT-), same as v1. Moving the
+  # 220k leg noticeably shrank the voltage jump seen right when the
+  # charger connects (data/votaz1.csv, v1 wiring) - the v1 tap point
+  # carried real extra series resistance (module traces/contacts) on top
+  # of the cell's own internal resistance.
+  #
+  # This still tracks real charge-current-induced voltage rise, which is
   # what the charging detection below relies on.
   #
   # The 30x oversampling above only helps against noise that varies WITHIN
