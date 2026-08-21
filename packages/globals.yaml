@@ -1,0 +1,156 @@
+# ---------------------------------------------------------------------------
+# All persistent/runtime state (globals), grouped by concern. Referenced
+# from sensors.yaml, display.yaml and menu.yaml by id.
+# ---------------------------------------------------------------------------
+globals:
+  # --- display/button basic state ---
+  - id: stay_on
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: display_on
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  - id: wake_timestamp
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+  # --- charging detection (drives the flat charging temperature offset,
+  # see packages/sensors.yaml) ---
+  - id: prev_batt_v
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: batt_v_slow_avg
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: is_charging
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: charge_start_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  - id: charge_confirm_count
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: discharge_confirm_count
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+  # --- temperature/humidity correction bookkeeping ---
+  - id: temp_raw_scd41
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: temp_correction_extra
+    type: float
+    restore_value: false
+    initial_value: '0'
+
+  # --- last-known-good sensor readings (restore_value: true -> survive
+  # deep sleep AND a full power cycle via the battery switch, since this is
+  # backed by flash/NVS, not RAM). The display always prefers a sensor's
+  # live state and only falls back to these while a fresh reading hasn't
+  # arrived yet after boot - see the display lambda in packages/display.yaml.
+  # Updated in-place by a filter lambda on each sensor as soon as a fresh,
+  # corrected reading lands - see packages/sensors.yaml. ---
+  - id: cached_co2
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_temp_scd41
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_humidity
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_temp_bmp180
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_pressure
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_battery_v
+    type: float
+    restore_value: true
+    initial_value: '0'
+  - id: cached_battery_pct
+    type: float
+    restore_value: true
+    initial_value: '0'
+
+  # --- settings menu state ---
+  - id: in_settings_menu
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: settings_menu_index
+    type: int
+    restore_value: false
+    initial_value: '0'
+  # Number of menu items - REZIM, HA PRIPOJENI, INTERVAL SPANKU, DEEP SLEEP,
+  # CO2 ALARM. Adding another item means updating the switch/case in both
+  # the button 5s-hold handler (packages/menu.yaml) AND the display render
+  # lambda (packages/display.yaml), and bumping this number.
+  - id: settings_item_count
+    type: int
+    restore_value: false
+    initial_value: '5'
+  # Set true within the 5s-hold handler whenever ha_connection_enabled just
+  # changed (via direct toggle or via applying a preset), so the follow-up
+  # if: step knows whether to actually call wifi.enable/disable this time.
+  - id: wifi_state_needs_sync
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  # Helper flag between steps of the manual single-click handler - the
+  # lambda step decides "should this go to deep sleep", the following if:
+  # step reads it and fires deep_sleep.enter (that action must be a
+  # top-level then: step, not callable directly from inside a lambda).
+  - id: manual_click_should_sleep
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  # --- persistent user settings (survive reboot-on-wake via restore_value) ---
+  - id: ha_connection_enabled
+    type: bool
+    restore_value: true
+    initial_value: 'true'
+  # Sleep interval in minutes for deep sleep, cycles through presets
+  # [5,10,15,30,60] via the INTERVAL SPANKU menu item.
+  - id: sleep_interval_minutes
+    type: int
+    restore_value: true
+    initial_value: '10'
+  # "DEEP SLEEP" toggle - when on, ANY display-off event (30s auto-timeout
+  # or manual click) puts the device into deep sleep instead of just
+  # blanking the display.
+  - id: deep_sleep_mode_enabled
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+  # CO2 safety alarm toggle - see packages/sensors.yaml (threshold check)
+  # and packages/display.yaml (warning screen).
+  - id: co2_alarm_enabled
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+
+  # --- CO2 alarm runtime state (not persistent - re-evaluated fresh on
+  # every wake from the current reading) ---
+  - id: co2_alarm_active
+    type: bool
+    restore_value: false
+    initial_value: 'false'

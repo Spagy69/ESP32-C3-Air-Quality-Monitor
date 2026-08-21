@@ -1,0 +1,273 @@
+# ---------------------------------------------------------------------------
+# Sensors: SCD41 (CO2/temp/humidity), BMP180 (temp/pressure), battery
+# voltage/level, charging detection + diagnostics.
+#
+# Update interval 60s throughout - balances battery life against reading
+# freshness for both the "always on at home" and "wake, measure, sleep"
+# use cases.
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: scd4x
+    address: 0x62
+    update_interval: 60s
+    automatic_self_calibration: true
+    altitude_compensation: 435m
+    # Static rest-offset (self-heating with the device idle, not charging).
+    # v1's value (5.6C) was measured on the OLD enclosure, where the sensor
+    # sat close to the ESP32/battery. v2 physically separates the sensor
+    # from the heat source, so this needs to be re-measured on the new
+    # enclosure before it's trustworthy - see README "Kalibrace" section for
+    # the measurement procedure.
+    # TODO(v2 calibration): replace with a freshly measured value. Sent to
+    # the SCD41 once at startup via I2C (register write), not re-applied
+    # during normal operation.
+    temperature_offset: 5.6°C
+    co2:
+      name: "CO2"
+      id: co2_sensor
+      filters:
+        - lambda: |-
+            id(cached_co2) = x;
+            return x;
+      # Local safety alarm for the "no HA connection" (CESTA) use case -
+      # only the OLED can warn here, there's no buzzer. Forces the display
+      # on with a warning screen (packages/display.yaml) and blocks the
+      # automatic 30s-timeout/deep-sleep path (packages/menu.yaml) for as
+      # long as the reading stays above the threshold. A manual button
+      # press always still works and puts the device back to sleep - that's
+      # the "acknowledge" path.
+      # Hysteresis (clear below CO2_ALARM_CLEAR_PPM, not right at the
+      # trigger point) avoids flicker if the reading hovers near the line.
+      on_value:
+        - lambda: |-
+            const float CO2_ALARM_TRIGGER_PPM = 3000.0f;  // TODO: confirm threshold
+            const float CO2_ALARM_CLEAR_PPM   = 2700.0f;
+
+            if (!id(co2_alarm_enabled)) {
+              id(co2_alarm_active) = false;
+              return;
+            }
+
+            if (!id(co2_alarm_active) && x >= CO2_ALARM_TRIGGER_PPM) {
+              id(co2_alarm_active) = true;
+              id(stay_on) = true;
+              id(display_on) = true;
+              id(oled_display).turn_on();
+              id(display_auto_off)->stop();
+            } else if (id(co2_alarm_active) && x <= CO2_ALARM_CLEAR_PPM) {
+              id(co2_alarm_active) = false;
+              // Resume the normal display-timeout/sleep behavior now that
+              // the air is fine again.
+              id(stay_on) = false;
+              id(wake_timestamp) = millis();
+              id(display_auto_off)->execute();
+            }
+    temperature:
+      name: "Temperature (SCD41)"
+      id: temp_scd41
+      filters:
+        # Flat charging-time offset instead of the old v1 time-decay curve
+        # model. The curve model (fit on a single charge cycle) overshot by
+        # ~4C in the field when charge conditions differed from the
+        # training data - a single constant, subtracted only while
+        # is_charging is true, can't overshoot like that even if it's not
+        # perfectly tuned. v2's physical sensor/heat-source separation
+        # should also make this number small.
+        # TODO(v2 calibration): measure with a reference thermometer while
+        # charging vs. at rest on the new enclosure, replace 0.0f.
+        # `Charging` / `Charging Duration` (below) are still published to
+        # HA regardless, so charging-time readings can also be filtered
+        # there if the flat offset isn't precise enough for some use.
+        - lambda: |-
+            const float CHARGE_OFFSET_SCD41 = 0.0f;  // TODO: measure
+
+            id(temp_raw_scd41) = x;
+            id(temp_correction_extra) = id(is_charging) ? CHARGE_OFFSET_SCD41 : 0.0f;
+
+            float corrected = x - id(temp_correction_extra);
+            id(cached_temp_scd41) = corrected;
+            return corrected;
+    humidity:
+      name: "Humidity"
+      id: humidity_scd41
+      # SCD41 computes RH internally from its own (pre-correction) temp
+      # reading, which is self-heating-biased high while charging -> RH
+      # comes out under-reported. The actual water vapor pressure in the
+      # air doesn't change from charging, so back it out via the reported
+      # RH + raw temp (Magnus approximation), then recompute RH using the
+      # corrected temperature. Assumes the capacitive humidity element
+      # itself isn't affected by self-heating independent of temperature -
+      # only the sensor's internal RH computation is.
+      filters:
+        - lambda: |-
+            if (id(temp_correction_extra) <= 0.001f) {
+              id(cached_humidity) = x;
+              return x;
+            }
+
+            float t_raw  = id(temp_raw_scd41);
+            float t_corr = t_raw - id(temp_correction_extra);
+
+            auto es = [](float t) {
+              return 6.112f * exp(17.62f * t / (243.12f + t));
+            };
+
+            float rh = x * (es(t_raw) / es(t_corr));
+            if (rh > 100.0f) rh = 100.0f;
+            if (rh < 0.0f) rh = 0.0f;
+            id(cached_humidity) = rh;
+            return rh;
+
+  - platform: bmp085
+    address: 0x77
+    update_interval: 60s
+    temperature:
+      name: "Temperature (BMP180)"
+      id: temp_bmp180
+      # Same static rest-offset + flat charging-offset approach as SCD41
+      # above. Rest-offset carried over from v1 (1.74C) - TODO(v2
+      # calibration): re-measure on the new enclosure, same procedure as
+      # SCD41 (README "Kalibrace"). Charging offset TODO: measure.
+      filters:
+        - lambda: |-
+            const float REST_OFFSET_BMP180   = 1.74f;  // TODO: re-measure on v2 enclosure
+            const float CHARGE_OFFSET_BMP180 = 0.0f;   // TODO: measure
+
+            float extra = REST_OFFSET_BMP180;
+            if (id(is_charging)) extra += CHARGE_OFFSET_BMP180;
+
+            float corrected = x - extra;
+            id(cached_temp_bmp180) = corrected;
+            return corrected;
+    pressure:
+      name: "Pressure"
+      id: pressure_bmp180
+      filters:
+        - lambda: |-
+            id(cached_pressure) = x;
+            return x;
+
+  # Battery voltage via external divider 220k (BAT+) + 100k (BAT-/GND), tap
+  # -> GPIO4. 30x oversampled to fight the noise a high-impedance divider
+  # picks up (in place of a hardware smoothing cap).
+  #
+  # Divider sits on the XIAO's BAT+/BAT- pins (after the TP4056 module's
+  # OUT+/OUT-), not the raw cell terminals - see WIRING.md. Negligible
+  # under normal operation (protection FET is tens of mOhm when closed), so
+  # this still tracks real charge-current-induced voltage rise, which is
+  # what the charging detection below relies on.
+  - platform: template
+    name: "Battery Voltage"
+    id: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      // TODO(v2 calibration): only the 4.15V point has been checked against
+      // a multimeter so far (matched exactly). Take 2-3 more reference
+      // readings across the range (e.g. ~3.5V, ~3.8V) and replace this if
+      // they show a different multiplier than the divider math predicts.
+      const float BATTERY_DIVIDER_MULTIPLIER = 3.2f;  // (220k+100k)/100k
+
+      float sum_mv = 0;
+      const int samples = 30;
+      for (int i = 0; i < samples; i++) {
+        sum_mv += analogReadMilliVolts(4);  // GPIO4, calibrated via chip's fuse-burned reference
+      }
+      float avg_v = (sum_mv / samples) / 1000.0;
+      float v = avg_v * BATTERY_DIVIDER_MULTIPLIER;
+
+      // --- Charging detection from a slow voltage trend ---
+      // A single-sample delta was tried first and missed real charging
+      // entirely (real rise is only ~0.004V/min, well under any threshold
+      // that also needs to reject WiFi-TX voltage sag noise). Instead:
+      // track a slow moving average (~10min time constant, alpha=0.1) as
+      // baseline; trend = current voltage minus that baseline. During real
+      // charging the baseline lags the rising voltage enough to keep trend
+      // reliably above threshold; a momentary noise spike barely moves the
+      // baseline, so trend falls back quickly - combined with requiring 3
+      // consecutive confirmations, that rejects noise-driven false
+      // positives.
+      if (id(prev_batt_v) > 0.0f) {
+        if (id(batt_v_slow_avg) <= 0.0f) {
+          id(batt_v_slow_avg) = v;
+        }
+        float trend = v - id(batt_v_slow_avg);
+        id(batt_v_slow_avg) = id(batt_v_slow_avg) + 0.1f * (v - id(batt_v_slow_avg));
+
+        bool was_charging = id(is_charging);
+
+        if (!was_charging) {
+          if (trend > 0.015f) {
+            id(charge_confirm_count)++;
+          } else {
+            id(charge_confirm_count) = 0;
+          }
+          if (id(charge_confirm_count) >= 3) {
+            id(is_charging) = true;
+            id(charge_start_ms) = millis();
+            id(charge_confirm_count) = 0;
+            id(discharge_confirm_count) = 0;
+          }
+        } else {
+          if (trend < -0.01f) {
+            id(discharge_confirm_count)++;
+          } else {
+            id(discharge_confirm_count) = 0;
+          }
+          if (id(discharge_confirm_count) >= 3) {
+            id(is_charging) = false;
+            id(discharge_confirm_count) = 0;
+            id(charge_confirm_count) = 0;
+          }
+        }
+      } else {
+        id(batt_v_slow_avg) = v;
+      }
+      // Safety net: if the disconnect never triggers a clean confirmed
+      // drop (e.g. very slow tail-off), force "not charging" after 3h so
+      // the flag can't get stuck on indefinitely.
+      if (id(is_charging) && (millis() - id(charge_start_ms) > 3UL * 60UL * 60UL * 1000UL)) {
+        id(is_charging) = false;
+      }
+      id(prev_batt_v) = v;
+      id(cached_battery_v) = v;
+      return v;
+
+  # Rough % estimate (linear, 3.0V = 0%, 4.2V = 100%) - see README Known
+  # Issues, not a precise fuel-gauge curve.
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    device_class: battery
+    update_interval: 60s
+    lambda: |-
+      float v = id(battery_voltage).state;
+      float pct = (v - 3.0) / (4.2 - 3.0) * 100.0;
+      if (pct > 100) pct = 100;
+      if (pct < 0) pct = 0;
+      id(cached_battery_pct) = pct;
+      return pct;
+
+  # Diagnostic: minutes since the current charging episode started (0 when
+  # not charging). Useful in Home Assistant to sanity-check the detection
+  # above against real data.
+  - platform: template
+    name: "Charging Duration"
+    id: charging_duration
+    unit_of_measurement: "min"
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: |-
+      if (!id(is_charging)) return 0.0f;
+      return (millis() - id(charge_start_ms)) / 60000.0f;
+
+binary_sensor:
+  - platform: template
+    name: "Charging"
+    id: charging_status
+    device_class: battery_charging
+    lambda: |-
+      return id(is_charging);

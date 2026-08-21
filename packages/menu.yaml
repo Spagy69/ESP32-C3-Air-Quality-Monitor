@@ -1,0 +1,199 @@
+# ---------------------------------------------------------------------------
+# Button (GPIO3, active LOW, internal pull-up) + settings menu + the
+# display-off/auto-sleep script.
+#
+# Outside the settings menu:
+#   - Single click: display on/off (30s countdown when turning on)
+#   - Double click:  toggle "stay on" (display stays on, no countdown, no
+#     auto-sleep, until double-clicked again)
+#   - Hold 5s+:      open the settings menu
+#
+# Inside the settings menu:
+#   - Single click: next item (cyclic)
+#   - Double click:  leave the menu without further changes (changes already
+#     made via 5s-hold are kept)
+#   - Hold 5s+:      confirm/toggle the current item
+# ---------------------------------------------------------------------------
+script:
+  - id: display_auto_off
+    mode: restart
+    then:
+      - delay: 30s
+      - if:
+          condition:
+            # Also stays false-branch (no-op) while the CO2 alarm is active,
+            # since the alarm handler (packages/sensors.yaml) sets stay_on
+            # true and stops this script for as long as it's active - it
+            # re-executes this script itself once the reading clears.
+            lambda: "return !id(stay_on);"
+          then:
+            - if:
+                condition:
+                  lambda: "return id(deep_sleep_mode_enabled);"
+                then:
+                  # "DEEP SLEEP" is on - after 30s idle, put the whole
+                  # device to sleep instead of just blanking the display.
+                  - lambda: |-
+                      id(display_on) = false;
+                      id(oled_display).turn_off();
+                      id(deep_sleep_1).set_sleep_duration(id(sleep_interval_minutes) * 60UL * 1000UL);
+                  - deep_sleep.enter: deep_sleep_1
+                else:
+                  - lambda: |-
+                      id(display_on) = false;
+                      id(oled_display).turn_off();
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO3
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+      allow_other_uses: true
+    name: "OLED Button"
+    id: oled_button
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_multi_click:
+      # DOUBLE CLICK
+      - timing:
+          - ON for at most 1.0s
+          - OFF for at most 0.4s
+          - ON for at most 1.0s
+          - OFF for at least 0.2s
+        then:
+          - lambda: |-
+              if (id(in_settings_menu)) {
+                id(in_settings_menu) = false;
+                id(display_on) = true;
+                id(wake_timestamp) = millis();
+                id(display_auto_off)->execute();
+                return;
+              }
+              if (id(stay_on)) {
+                id(stay_on) = false;
+                id(display_on) = true;
+                id(wake_timestamp) = millis();
+                id(display_auto_off)->execute();
+              } else {
+                id(stay_on) = true;
+                id(display_on) = true;
+                id(oled_display).turn_on();
+                id(display_auto_off)->stop();
+              }
+
+      # SINGLE CLICK - manual display on/off always works as a direct
+      # override, regardless of any CO2 alarm currently showing (that's the
+      # "acknowledge" path for the alarm - see packages/sensors.yaml).
+      - timing:
+          - ON for at most 1.0s
+          - OFF for at least 0.4s
+        then:
+          - lambda: |-
+              if (id(in_settings_menu)) {
+                id(settings_menu_index) = (id(settings_menu_index) + 1) % id(settings_item_count);
+                return;
+              }
+              if (id(display_on)) {
+                id(display_on) = false;
+                id(stay_on) = false;
+                id(display_auto_off)->stop();
+                id(oled_display).turn_off();
+                if (id(deep_sleep_mode_enabled)) {
+                  id(deep_sleep_1).set_sleep_duration(id(sleep_interval_minutes) * 60UL * 1000UL);
+                  id(manual_click_should_sleep) = true;
+                }
+              } else {
+                id(display_on) = true;
+                id(stay_on) = false;
+                id(wake_timestamp) = millis();
+                id(oled_display).turn_on();
+                id(display_auto_off)->execute();
+              }
+          - if:
+              condition:
+                lambda: |-
+                  bool go = id(manual_click_should_sleep);
+                  id(manual_click_should_sleep) = false;
+                  return go;
+              then:
+                - deep_sleep.enter: deep_sleep_1
+
+      # HOLD 5s+ - outside the menu: open it. Inside: confirm/toggle the
+      # current item. Item order/behavior must stay in sync with the
+      # switch/case in the display render lambda (packages/display.yaml).
+      - timing:
+          - ON for at least 5.0s
+        then:
+          - lambda: |-
+              if (!id(in_settings_menu)) {
+                id(in_settings_menu) = true;
+                id(settings_menu_index) = 0;
+                id(stay_on) = true;
+                id(display_on) = true;
+                id(oled_display).turn_on();
+                id(display_auto_off)->stop();
+                return;
+              }
+
+              switch (id(settings_menu_index)) {
+                case 0: {  // REZIM - apply a full preset in one shot
+                  bool currently_doma = id(ha_connection_enabled)
+                      && !id(deep_sleep_mode_enabled)
+                      && !id(co2_alarm_enabled);
+                  if (currently_doma) {
+                    // -> CESTA: no WiFi expected, sleep between readings,
+                    // local CO2 alarm on.
+                    id(ha_connection_enabled) = false;
+                    id(deep_sleep_mode_enabled) = true;
+                    id(sleep_interval_minutes) = 5;
+                    id(co2_alarm_enabled) = true;
+                  } else {
+                    // CESTA or CUSTOM -> DOMA: always connected, no sleep,
+                    // no CO2 alarm (you're right there to notice).
+                    id(ha_connection_enabled) = true;
+                    id(deep_sleep_mode_enabled) = false;
+                    id(co2_alarm_enabled) = false;
+                  }
+                  id(wifi_state_needs_sync) = true;
+                  break;
+                }
+                case 1:  // HA PRIPOJENI
+                  id(ha_connection_enabled) = !id(ha_connection_enabled);
+                  id(wifi_state_needs_sync) = true;
+                  break;
+                case 2: {  // INTERVAL SPANKU - cycle through presets
+                  const int presets[] = {5, 10, 15, 30, 60};
+                  const int n_presets = 5;
+                  int cur = id(sleep_interval_minutes);
+                  int idx = 0;
+                  for (int i = 0; i < n_presets; i++) {
+                    if (presets[i] == cur) { idx = i; break; }
+                  }
+                  idx = (idx + 1) % n_presets;
+                  id(sleep_interval_minutes) = presets[idx];
+                  break;
+                }
+                case 3:  // DEEP SLEEP
+                  id(deep_sleep_mode_enabled) = !id(deep_sleep_mode_enabled);
+                  break;
+                case 4:  // CO2 ALARM
+                  id(co2_alarm_enabled) = !id(co2_alarm_enabled);
+                  if (!id(co2_alarm_enabled)) id(co2_alarm_active) = false;
+                  break;
+              }
+          - if:
+              condition:
+                lambda: 'return id(wifi_state_needs_sync);'
+              then:
+                - lambda: 'id(wifi_state_needs_sync) = false;'
+                - if:
+                    condition:
+                      lambda: 'return id(ha_connection_enabled);'
+                    then:
+                      - wifi.enable:
+                    else:
+                      - wifi.disable:
