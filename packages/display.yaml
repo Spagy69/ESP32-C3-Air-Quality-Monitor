@@ -6,6 +6,12 @@ font:
   - file: "gfonts://Roboto"
     id: font_label
     size: 10
+  # Settings-menu state value (ZAPNUTO/VYPNUTO/DOMA/CESTA/CUSTOM/"10 MIN") -
+  # bigger than font_label for legibility, full charset (not glyph-limited
+  # like font_big) since these are words, not just numbers.
+  - file: "gfonts://Roboto"
+    id: font_menu_value
+    size: 14
 
 # ---------------------------------------------------------------------------
 # Display, tuned for 128x32 (no clipping). Render order: settings menu, then
@@ -28,10 +34,19 @@ display:
       if (!id(display_on)) return;
 
       // --- Settings menu (hold button 5s+ to enter) ---
+      //
+      // Layout mirrors the normal sensor pages below (label top-left,
+      // big value centered, position dots bottom) instead of stacking
+      // name/state/hint as three separate text lines - that older layout
+      // let a long hint string ("5s: dalsi hodnota") run underneath and
+      // collide with the position dots, and lowercase descenders in the
+      // hint ("vypnout"/"zapnout"/"prepnout") got clipped by the display's
+      // bottom edge. Dropping the per-item hint (the 5s-hold convention is
+      // the same for every item - see README "Menu a presety") removes
+      // both problems instead of just repositioning them.
       if (id(in_settings_menu)) {
         const char *item_name;
         char state_buf[16];
-        char hint_buf[20];
         switch (id(settings_menu_index)) {
           case 0: {  // REZIM - must mirror the match logic in
                      // packages/menu.yaml's 5s-hold handler exactly.
@@ -46,66 +61,57 @@ display:
             if (is_doma)       snprintf(state_buf, sizeof(state_buf), "DOMA");
             else if (is_cesta) snprintf(state_buf, sizeof(state_buf), "CESTA");
             else               snprintf(state_buf, sizeof(state_buf), "CUSTOM");
-            snprintf(hint_buf, sizeof(hint_buf), "5s: prepnout");
             break;
           }
           case 1:  // HA připojení (WiFi)
             item_name = "HA PRIPOJENI";
-            if (id(ha_connection_enabled)) {
-              snprintf(state_buf, sizeof(state_buf), "ZAPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: vypnout");
-            } else {
-              snprintf(state_buf, sizeof(state_buf), "VYPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: zapnout");
-            }
+            snprintf(state_buf, sizeof(state_buf), id(ha_connection_enabled) ? "ZAPNUTO" : "VYPNUTO");
             break;
           case 2:  // Interval hlubokého spánku
             item_name = "INTERVAL SPANKU";
             snprintf(state_buf, sizeof(state_buf), "%d MIN", id(sleep_interval_minutes));
-            snprintf(hint_buf, sizeof(hint_buf), "5s: dalsi hodnota");
             break;
           case 3:  // Automatický hluboký spánek
             item_name = "DEEP SLEEP";
-            if (id(deep_sleep_mode_enabled)) {
-              snprintf(state_buf, sizeof(state_buf), "ZAPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: vypnout");
-            } else {
-              snprintf(state_buf, sizeof(state_buf), "VYPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: zapnout");
-            }
+            snprintf(state_buf, sizeof(state_buf), id(deep_sleep_mode_enabled) ? "ZAPNUTO" : "VYPNUTO");
             break;
           case 4:  // Lokální CO2 alarm
             item_name = "CO2 ALARM";
-            if (id(co2_alarm_enabled)) {
-              snprintf(state_buf, sizeof(state_buf), "ZAPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: vypnout");
-            } else {
-              snprintf(state_buf, sizeof(state_buf), "VYPNUTO");
-              snprintf(hint_buf, sizeof(hint_buf), "5s: zapnout");
-            }
+            snprintf(state_buf, sizeof(state_buf), id(co2_alarm_enabled) ? "ZAPNUTO" : "VYPNUTO");
             break;
           default:
             item_name = "?";
             snprintf(state_buf, sizeof(state_buf), "-");
-            snprintf(hint_buf, sizeof(hint_buf), "-");
             break;
         }
-        it.print(2, 0, id(font_label), item_name);
-        it.print(2, 11, id(font_label), state_buf);
-        it.print(2, 22, id(font_label), hint_buf);
 
-        // Position dots, bottom-right - sized to fit settings_item_count
-        // items (currently 5) within the 128px width.
-        int dot_spacing = 10;
-        int dots_w = id(settings_item_count) * dot_spacing;
-        int start_x = 126 - dots_w;
+        // Top: item name (left) + position "i/N" (right) - same top-row
+        // slot the sensor pages use for their countdown/[STAY] indicator.
+        it.print(2, 0, id(font_label), item_name);
+        char pos_buf[6];
+        snprintf(pos_buf, sizeof(pos_buf), "%d/%d", id(settings_menu_index) + 1, id(settings_item_count));
+        it.print(126, 0, id(font_label), TextAlign::TOP_RIGHT, pos_buf);
+
+        // Thin separator so the name row reads as a header, not just text
+        // floating above the value.
+        it.horizontal_line(0, 11, 128);
+
+        // Middle: the value, big and centered - this is the one thing you
+        // actually came into the menu to check/change.
+        it.print(64, 14, id(font_menu_value), TextAlign::TOP_CENTER, state_buf);
+
+        // Bottom: position dots, same visual style/spacing as the sensor
+        // page indicator below - nothing else is drawn on this row now,
+        // so there's nothing left for them to collide with.
+        int spacing = 7;
+        int start_x = 118 - (id(settings_item_count) - 1) * spacing;
         for (int i = 0; i < id(settings_item_count); i++) {
-          int x = start_x + (i * dot_spacing);
-          int y = 27;
+          int x = start_x + (i * spacing);
+          int y = 28;
           if (i == id(settings_menu_index)) {
-            it.filled_rectangle(x, y, 5, 4);
+            it.filled_rectangle(x, y, 4, 3);
           } else {
-            it.rectangle(x, y, 5, 4);
+            it.rectangle(x, y, 4, 3);
           }
         }
         return;

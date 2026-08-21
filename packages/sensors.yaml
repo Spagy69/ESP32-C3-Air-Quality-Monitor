@@ -156,6 +156,15 @@ sensor:
   # under normal operation (protection FET is tens of mOhm when closed), so
   # this still tracks real charge-current-induced voltage rise, which is
   # what the charging detection below relies on.
+  #
+  # The 30x oversampling above only helps against noise that varies WITHIN
+  # one reading (the 30 samples run back-to-back in a few ms). A noise
+  # event that spans the whole burst - e.g. a WiFi TX-induced supply sag -
+  # poisons all 30 samples together and oversampling can't touch it. That's
+  # exactly what showed up in a real capture (data/votaz1.csv): one whole
+  # 60s reading landed ~0.13V low while its neighbors were flat. The
+  # `median` filter below works across READINGS instead of within one, so
+  # a single bad reading gets thrown out instead of published/graphed.
   - platform: template
     name: "Battery Voltage"
     id: battery_voltage
@@ -163,6 +172,11 @@ sensor:
     device_class: voltage
     accuracy_decimals: 2
     update_interval: 60s
+    filters:
+      - median:
+          window_size: 3
+          send_every: 1
+          send_first_at: 1
     lambda: |-
       // TODO(v2 calibration): only the 4.15V point has been checked against
       // a multimeter so far (matched exactly). Take 2-3 more reference
@@ -232,8 +246,12 @@ sensor:
         id(is_charging) = false;
       }
       id(prev_batt_v) = v;
-      id(cached_battery_v) = v;
       return v;
+    # Cache after the median filter above has run (on_value sees the
+    # published, outlier-rejected value) - a raw noise spike should never
+    # get remembered as "last known good".
+    on_value:
+      - lambda: 'id(cached_battery_v) = x;'
 
   # Rough % estimate (linear, 3.0V = 0%, 4.2V = 100%) - see README Known
   # Issues, not a precise fuel-gauge curve.

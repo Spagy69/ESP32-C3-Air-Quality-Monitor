@@ -56,6 +56,28 @@ fallback_ap_password: "your-fallback-password"
 
 **Nadmořská výška:** v `air-quality-monitor.yaml` je u SCD41 nastavené `altitude_compensation: 435m`. Tohle je výchozí hodnota nastavená podle mojí konkrétní lokace, ovlivňuje přesnost přepočtu CO₂. Pokud si tenhle config používáš jinde, uprav si tu hodnotu na nadmořskou výšku svýho místa.
 
+## Menu a presety
+
+Podrž tlačítko 5s+ pro vstup do nastavovacího menu. Uvnitř menu:
+- **Jedno kliknutí** - další položka (cyklicky)
+- **Dvojklik** - odejít z menu beze změny (co už bylo potvrzeno 5s-holdem, zůstává uložené)
+- **Drž 5s+** - potvrdit/přepnout aktuální položku
+
+| Položka | Co dělá |
+|---|---|
+| REZIM | Aplikuje celý preset (DOMA/CESTA) najednou - viz tabulka níže. Pokud se aktuální nastavení neshoduje s žádným presetem (protože jsi něco upravil ručně), zobrazí se CUSTOM. |
+| HA PRIPOJENI | Ruční přepínač WiFi/HA připojení. |
+| INTERVAL SPANKU | Cykluje presety [5, 10, 15, 30, 60] minut - jak dlouho spí hluboký spánek. |
+| DEEP SLEEP | Když zapnuto, JAKÉKOLIV zhasnutí displeje (30s timeout i ruční klik) rovnou uspí celé zařízení místo pouhého zhasnutí. |
+| CO2 ALARM | Zapíná/vypíná lokální varování na displeji při vysokém CO2 (viz níže). |
+
+| Preset | HA PRIPOJENI | DEEP SLEEP | INTERVAL SPANKU | CO2 ALARM |
+|---|---|---|---|---|
+| **DOMA** | zapnuto | vypnuto | - | vypnuto |
+| **CESTA** | vypnuto | zapnuto | 10 min | zapnuto |
+
+**CO2 ALARM** je pro situace bez HA (typicky CESTA - např. v autě přes noc): pokud CO2 překročí bezpečný práh (aktuálně 3000ppm spuštění / 2700ppm zhasnutí, hystereze proti blikání), displej se sám rozsvítí a bliká s varováním, i kdyby byl předtím zhasnutý/zařízení v hlubokém spánku. Automatické zhasnutí/uspání se dočasně zablokuje, dokud hodnota neklesne zpátky pod práh - manuální klik tlačítka vždy funguje jako potvrzení/odložení.
+
 ## Kryt
 
 3D tištěný z PLA. Zdrojový soubor: [`enclosure/README.md`](enclosure/README.md). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).
@@ -79,6 +101,8 @@ Než na to spolehneš dlouhodobě, stojí za to ověřit:
 - **Riziko driftu CO₂ auto-kalibrace (ASC).** `automatic_self_calibration` je na SCD41 zapnutá. ASC předpokládá, že senzor pravidelně vidí čerstvý venkovní vzduch (~400ppm) a podle toho si upravuje baseline. Pokud senzor sedí v místnosti, která se málokdy pořádně vyvětrá, ASC si může posunout baseline vůči špatné referenci a časem podhodnocovat CO₂. Pokud se prostor pravidelně nevětrá, zvaž vypnutí ASC a manuální kalibraci místo toho.
 - **Detekce nabíjení měla vážný bug, teď opravený a potvrzený funkční (srpen 2026).** Původní debounce fix (proti false-positive z WiFi zátěže) byl nastavený na příliš vysoký práh - v reálném testu se `Charging` nespustilo ani jednou za celý 2.5h nabíjecí cyklus. Opraveno použitím pomalého klouzavého baseline napětí (časová konstanta ~10min) místo trendu z jednoho vzorku, s nižším prahem (0.015V/-0.01V). Ověřeno v praxi - `Charging`/`Charging Duration` teď spolehlivě naskočí při reálném nabíjení. Zatím neověřeno proti novým datům vybíjení (starý test byl s jinou verzí prahu) - stojí za krátký kontrolní test bez nabíjení.
 - **Teplota senzorů (SCD41, BMP180) je při nabíjení vyšší než realita (self-heating).** Firmware používá jen statický klidový offset, žádnou dynamickou korekci.
+- **Napětí baterky skočí nahoru v okamžiku připojení nabíječky (očekávané, ne bug).** Reálný capture (`data/votaz1.csv`, srpen 2026): klidové ~3.72V, hned po zapojení nabíječky skok na ~4.11-4.18V během 1 minuty. Dělič sedí za TP4056 (BAT+/BAT-, viz sekce Baterie), takže reaguje na skutečné napětí na svorkách článku - a to při nabíjecím proudu okamžitě vzroste o pád napětí na vnitřním odporu článku (I × R_vnitřní). U recyklovaného/staršího článku s vyšším vnitřním odporem je tenhle skok větší, než by byl u nového. Napětí samotné je tedy naměřené správně - jen nereprezentuje "klidové" SOC, dokud se nabíjení nezastaví. `Battery Level` % z toho během nabíjení může vypadat zavádějícě vysoké - ber ho jako platné jen mimo nabíjení.
+- **Jednorázové šumové výkyvy v `Battery Voltage` (opraveno, srpen 2026).** Stejný capture ukázal jedno čtení (celá 60s perioda) o ~0.13V níž než sousední - pravděpodobně krátký pokles napájení při WiFi vysílání zasáhl celou dávku 30 oversamplovaných čtení najednou (ta běží v řádu ms po sobě, takže je šum tohohle typu "přeskočí" všechny stejně - oversampling proti němu nepomůže). Přidán `median` filtr (okno 3 čtení) přes `packages/sensors.yaml`, který takové osamocené odlehlé hodnoty vyřadí dřív, než se publikují do HA.
 - **Bod 4.15V na horním konci rozsahu byl ověřen proti multimetru a sedí** (HA i multimetr shodně 4.15V). Zbytek rozsahu (nízké a střední napětí) zatím ověřený není – jedno starší pozorování uvádělo ~+2.6% odchylku, ale nejspíš z jiné části rozsahu/jiných podmínek. Než se bude věřit `* 3.2` násobiteli napříč celým rozsahem, stojí za to změřit i další body (např. ~3.5V a ~3.8V).
 - **Rychlé vybíjení bez uspávání.** V testu (srpen 2026) baterka klesla ze 4.15V na 2.71V za ~10 hodin běžného provozu (bez nabíjení, jen normální WiFi/senzory/displej v klidu) – firmware nemá deep sleep, WiFi je trvale připojené. Doporučuje se nastavit v Home Assistantu notifikaci na nízké napětí (např. pod 3.3-3.4V), aby se předešlo opakovanému dojíždění až k ochrannému cutoffu (~2.5V, viz sekce Baterie výše) – to urychluje degradaci článku, obzvlášť u recyklovaného.
 
