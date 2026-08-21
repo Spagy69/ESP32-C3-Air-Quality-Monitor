@@ -184,6 +184,11 @@ binary_sensor:
                   id(co2_alarm_enabled) = !id(co2_alarm_enabled);
                   if (!id(co2_alarm_enabled)) id(co2_alarm_active) = false;
                   break;
+                case 5:  // ASC KALIBRACE - only stores the preference here;
+                         // actually applied via raw I2C at the next boot,
+                         // see the on_boot step in air-quality-monitor.yaml.
+                  id(asc_enabled) = !id(asc_enabled);
+                  break;
               }
           - if:
               condition:

@@ -100,13 +100,14 @@ globals:
     restore_value: false
     initial_value: '0'
   # Number of menu items - REZIM, HA PRIPOJENI, INTERVAL SPANKU, DEEP SLEEP,
-  # CO2 ALARM. Adding another item means updating the switch/case in both
-  # the button 5s-hold handler (packages/menu.yaml) AND the display render
-  # lambda (packages/display.yaml), and bumping this number.
+  # CO2 ALARM, ASC KALIBRACE. Adding another item means updating the
+  # switch/case in both the button 5s-hold handler (packages/menu.yaml) AND
+  # the display render lambda (packages/display.yaml), and bumping this
+  # number.
   - id: settings_item_count
     type: int
     restore_value: false
-    initial_value: '5'
+    initial_value: '6'
   # Set true within the 5s-hold handler whenever ha_connection_enabled just
   # changed (via direct toggle or via applying a preset), so the follow-up
   # if: step knows whether to actually call wifi.enable/disable this time.
@@ -147,6 +148,15 @@ globals:
     type: bool
     restore_value: true
     initial_value: 'false'
+  # SCD41 automatic self-calibration toggle - matches the compiled default
+  # (automatic_self_calibration: true in packages/sensors.yaml). Applied
+  # via raw I2C in an on_boot step in air-quality-monitor.yaml, NOT here -
+  # toggling this only stores the preference, it takes effect on the next
+  # reboot/wake, same as every other menu setting's timing.
+  - id: asc_enabled
+    type: bool
+    restore_value: true
+    initial_value: 'true'
 
   # --- CO2 alarm runtime state (not persistent - re-evaluated fresh on
   # every wake from the current reading) ---

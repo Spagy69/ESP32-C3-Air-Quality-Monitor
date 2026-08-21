@@ -16,6 +16,33 @@ esphome:
             id(display_on) = true;
             id(wake_timestamp) = millis();
         - script.execute: display_auto_off
+    - priority: -150
+      then:
+        # SCD41 ASC (auto self-calibration) toggle from the menu (ASC
+        # KALIBRACE item, packages/menu.yaml). ESPHome's scd4x component
+        # only exposes automatic_self_calibration as a compile-time key and
+        # re-sends the COMPILED value (true, packages/sensors.yaml) over
+        # I2C on every boot - so a plain runtime toggle would get stomped
+        # right back at the next wake. This only needs to act when the
+        # user has turned it OFF (away from the compiled default) - turning
+        # it back on needs nothing extra, ESPHome's own setup() already
+        # re-applies the compiled "true" on every boot regardless.
+        #
+        # Raw I2C per the SCD4x datasheet: must be in idle mode to change
+        # ASC, so stop periodic measurement, wait, send the command, then
+        # resume. Not using scd4x.persist_settings (0x2313) on purpose - it
+        # writes the sensor's own NVM (limited write cycles) and we don't
+        # need it there, since id(asc_enabled) already persists our choice
+        # in the ESP32's own flash and this step re-applies it every boot
+        # where it matters.
+        - lambda: |-
+            if (!id(asc_enabled)) {
+              id(scd41_hub).write_command((uint16_t) 0x3F86);              // stop_periodic_measurement
+              delay(500);                                                   // datasheet: idle >=500ms before other commands
+              id(scd41_hub).write_command((uint16_t) 0x2416, (uint16_t) 0); // set_automatic_self_calibration_enabled = false
+              delay(1);
+              id(scd41_hub).write_command((uint16_t) 0x21B1);              // start_periodic_measurement
+            }
     - priority: -200
       then:
         # WiFi doesn't auto-enable (enable_on_boot: false below) - restored

@@ -79,6 +79,10 @@ display:
             item_name = "CO2 ALARM";
             snprintf(state_buf, sizeof(state_buf), id(co2_alarm_enabled) ? "ZAPNUTO" : "VYPNUTO");
             break;
+          case 5:  // SCD41 automatic self-calibration
+            item_name = "ASC KALIBRACE";
+            snprintf(state_buf, sizeof(state_buf), id(asc_enabled) ? "ZAPNUTO" : "VYPNUTO");
+            break;
           default:
             item_name = "?";
             snprintf(state_buf, sizeof(state_buf), "-");
