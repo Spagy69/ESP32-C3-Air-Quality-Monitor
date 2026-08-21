@@ -79,6 +79,8 @@ Podrž tlačítko 5s+ pro vstup do nastavovacího menu. Uvnitř menu:
 
 **CO2 ALARM** je pro situace bez HA (typicky CESTA - např. v autě přes noc): pokud CO2 překročí bezpečný práh (aktuálně 3000ppm spuštění / 2700ppm zhasnutí, hystereze proti blikání), displej se sám rozsvítí a bliká s varováním, i kdyby byl předtím zhasnutý/zařízení v hlubokém spánku. Automatické zhasnutí/uspání se dočasně zablokuje, dokud hodnota neklesne zpátky pod práh - manuální klik tlačítka vždy funguje jako potvrzení/odložení.
 
+Úplně první CO2 čtení po každém probuzení/rebootu se pro účely alarmu přeskočí (může to být nestabilní hodnota z rozehřívání senzoru) - alarm se začne vyhodnocovat až od druhého čtení dál. SCD41 kvůli tomu (a kvůli tomu, aby vůbec nějaké čerstvé čtení stihlo dorazit do 30s, než se displej při CESTA presetu sám vypne/uspí) teď měří po 10s místo 60s - viz `packages/sensors.yaml`.
+
 ## Kryt
 
 3D tištěný z PLA. Zdrojový soubor: [`enclosure/README.md`](enclosure/README.md). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).

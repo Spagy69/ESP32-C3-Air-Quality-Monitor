@@ -2,15 +2,25 @@
 # Sensors: SCD41 (CO2/temp/humidity), BMP180 (temp/pressure), battery
 # voltage/level, charging detection + diagnostics.
 #
-# Update interval 60s throughout - balances battery life against reading
-# freshness for both the "always on at home" and "wake, measure, sleep"
-# use cases.
+# BMP180/battery stay at 60s (no reason to poll faster). SCD41 polls much
+# faster - see the update_interval comment right below for why.
 # ---------------------------------------------------------------------------
 sensor:
   - platform: scd4x
     id: scd41_hub
     address: 0x62
-    update_interval: 60s
+    # Fast on purpose - NOT just "fresher data". PollingComponent's FIRST
+    # update() only fires after one full update_interval has elapsed since
+    # boot (confirmed in ESPHome's own scheduler code, not assumed) - with
+    # the old 60s interval, a CESTA wake cycle (deep sleep, display auto-
+    # off/sleep at 30s - packages/menu.yaml) would go back to sleep BEFORE
+    # a single real CO2 reading ever arrived. That's not just bad for the
+    # CO2 alarm below - HA never saw a fresh reading in CESTA mode either
+    # way, every published value would've stayed the boot-time cached one.
+    # 10s means real readings land at ~10/20/30s into the wake window -
+    # SCD41 samples internally every 5s regardless of poll rate anyway, so
+    # this doesn't add real sensor power draw, just reads it more often.
+    update_interval: 10s
     # Compiled default - stays ON unless overridden. Actually toggling ASC
     # at runtime (menu ASC KALIBRACE item) needs raw I2C, since ESPHome's
     # scd4x component only exposes this as a compile-time key - see the
@@ -47,6 +57,18 @@ sensor:
         - lambda: |-
             const float CO2_ALARM_TRIGGER_PPM = 3000.0f;  // TODO: confirm threshold
             const float CO2_ALARM_CLEAR_PPM   = 2700.0f;
+
+            // The very first reading after a boot (cold boot, deep-sleep
+            // wake, or right after the ASC on_boot I2C sequence restarts
+            // periodic measurement) can be an unsettled sensor warm-up
+            // transient - skip evaluating the alarm on it, arm starting
+            // from the next one. co2_reading_settled resets to false every
+            // boot (restore_value: false), so this naturally re-applies
+            // each wake without any extra bookkeeping.
+            if (!id(co2_reading_settled)) {
+              id(co2_reading_settled) = true;
+              return;
+            }
 
             if (!id(co2_alarm_enabled)) {
               id(co2_alarm_active) = false;
