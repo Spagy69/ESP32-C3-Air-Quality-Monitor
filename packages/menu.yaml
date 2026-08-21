@@ -149,7 +149,7 @@ binary_sensor:
                     // local CO2 alarm on.
                     id(ha_connection_enabled) = false;
                     id(deep_sleep_mode_enabled) = true;
-                    id(sleep_interval_minutes) = 5;
+                    id(sleep_interval_minutes) = 10;
                     id(co2_alarm_enabled) = true;
                   } else {
                     // CESTA or CUSTOM -> DOMA: always connected, no sleep,

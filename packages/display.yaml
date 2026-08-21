@@ -41,7 +41,7 @@ display:
                 && !id(co2_alarm_enabled);
             bool is_cesta = !id(ha_connection_enabled)
                 && id(deep_sleep_mode_enabled)
-                && id(sleep_interval_minutes) == 5
+                && id(sleep_interval_minutes) == 10
                 && id(co2_alarm_enabled);
             if (is_doma)       snprintf(state_buf, sizeof(state_buf), "DOMA");
             else if (is_cesta) snprintf(state_buf, sizeof(state_buf), "CESTA");
