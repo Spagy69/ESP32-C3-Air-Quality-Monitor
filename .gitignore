@@ -6,3 +6,6 @@
 
 # Raw HA exports / calibration measurement data - local only, not for the repo
 /data/
+
+# AI-assistant session context/history - local only, not for the public repo
+/HANDOFF.md
