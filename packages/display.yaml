@@ -53,11 +53,13 @@ display:
             item_name = "REZIM";
             bool is_doma = id(ha_connection_enabled)
                 && !id(deep_sleep_mode_enabled)
-                && !id(co2_alarm_enabled);
+                && !id(co2_alarm_enabled)
+                && id(asc_enabled);
             bool is_cesta = !id(ha_connection_enabled)
                 && id(deep_sleep_mode_enabled)
                 && id(sleep_interval_minutes) == 10
-                && id(co2_alarm_enabled);
+                && id(co2_alarm_enabled)
+                && !id(asc_enabled);
             if (is_doma)       snprintf(state_buf, sizeof(state_buf), "DOMA");
             else if (is_cesta) snprintf(state_buf, sizeof(state_buf), "CESTA");
             else               snprintf(state_buf, sizeof(state_buf), "CUSTOM");

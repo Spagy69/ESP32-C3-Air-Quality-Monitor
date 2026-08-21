@@ -143,20 +143,25 @@ binary_sensor:
                 case 0: {  // REZIM - apply a full preset in one shot
                   bool currently_doma = id(ha_connection_enabled)
                       && !id(deep_sleep_mode_enabled)
-                      && !id(co2_alarm_enabled);
+                      && !id(co2_alarm_enabled)
+                      && id(asc_enabled);
                   if (currently_doma) {
                     // -> CESTA: no WiFi expected, sleep between readings,
-                    // local CO2 alarm on.
+                    // local CO2 alarm on, ASC off (no fresh air seen away
+                    // from home - see ASC KALIBRACE item/README for why).
                     id(ha_connection_enabled) = false;
                     id(deep_sleep_mode_enabled) = true;
                     id(sleep_interval_minutes) = 10;
                     id(co2_alarm_enabled) = true;
+                    id(asc_enabled) = false;
                   } else {
                     // CESTA or CUSTOM -> DOMA: always connected, no sleep,
-                    // no CO2 alarm (you're right there to notice).
+                    // no CO2 alarm (you're right there to notice), ASC
+                    // back on (regularly sees normal room air again).
                     id(ha_connection_enabled) = true;
                     id(deep_sleep_mode_enabled) = false;
                     id(co2_alarm_enabled) = false;
+                    id(asc_enabled) = true;
                   }
                   id(wifi_state_needs_sync) = true;
                   break;
