@@ -172,9 +172,20 @@ sensor:
   # event that spans the whole burst - e.g. a WiFi TX-induced supply sag -
   # poisons all 30 samples together and oversampling can't touch it. That's
   # exactly what showed up in a real capture (data/votaz1.csv): one whole
-  # 60s reading landed ~0.13V low while its neighbors were flat. The
-  # `median` filter below works across READINGS instead of within one, so
-  # a single bad reading gets thrown out instead of published/graphed.
+  # 60s reading landed ~0.13V low while its neighbors were flat.
+  #
+  # BUG FOUND IN PRACTICE (fixed): an earlier version fought that with an
+  # ESPHome `filters: median` step, which only smooths the PUBLISHED
+  # value - the charging-detection trend/confirm-count logic below still
+  # saw the raw, un-smoothed reading directly. A single noise dip could
+  # silently reset charge_confirm_count right as it was building toward 3,
+  # so `Charging` never latched on during a real charge session even
+  # though the (separately smoothed) published voltage graphed perfectly
+  # cleanly - the noise was invisible in HA but still resetting the
+  # counter internally. Fix: do the median-of-3 ourselves, once, inside
+  # this lambda, and use that SAME cleaned value for both the published
+  # state AND the charging detection below - no more split-brain between
+  # what gets published and what the state machine actually reacts to.
   - platform: template
     name: "Battery Voltage"
     id: battery_voltage
@@ -182,11 +193,6 @@ sensor:
     device_class: voltage
     accuracy_decimals: 2
     update_interval: 60s
-    filters:
-      - median:
-          window_size: 3
-          send_every: 1
-          send_first_at: 1
     lambda: |-
       // TODO(v2 calibration): only the 4.15V point has been checked against
       // a multimeter so far (matched exactly). Take 2-3 more reference
@@ -200,7 +206,23 @@ sensor:
         sum_mv += analogReadMilliVolts(4);  // GPIO4, calibrated via chip's fuse-burned reference
       }
       float avg_v = (sum_mv / samples) / 1000.0;
-      float v = avg_v * BATTERY_DIVIDER_MULTIPLIER;
+      float raw_v = avg_v * BATTERY_DIVIDER_MULTIPLIER;
+
+      // Median-of-3 across READINGS (see comment above for why this has
+      // to happen here, not as an external filter). Plain 3-value median,
+      // no library needed. Falls through to the raw reading for the
+      // first two boots ever (not enough history yet).
+      float v;
+      if (id(batt_v_hist2) > 0.0f) {
+        float a = raw_v, b = id(batt_v_hist1), c = id(batt_v_hist2);
+        if ((a <= b && b <= c) || (c <= b && b <= a)) v = b;
+        else if ((b <= a && a <= c) || (c <= a && a <= b)) v = a;
+        else v = c;
+      } else {
+        v = raw_v;
+      }
+      id(batt_v_hist2) = id(batt_v_hist1);
+      id(batt_v_hist1) = raw_v;
 
       // --- Charging detection from a slow voltage trend ---
       // A single-sample delta was tried first and missed real charging
@@ -256,12 +278,8 @@ sensor:
         id(is_charging) = false;
       }
       id(prev_batt_v) = v;
+      id(cached_battery_v) = v;
       return v;
-    # Cache after the median filter above has run (on_value sees the
-    # published, outlier-rejected value) - a raw noise spike should never
-    # get remembered as "last known good".
-    on_value:
-      - lambda: 'id(cached_battery_v) = x;'
 
   # Rough % estimate (linear, 3.0V = 0%, 4.2V = 100%) - see README Known
   # Issues, not a precise fuel-gauge curve.

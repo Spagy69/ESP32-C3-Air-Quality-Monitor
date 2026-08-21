@@ -19,6 +19,17 @@ globals:
 
   # --- charging detection (drives the flat charging temperature offset,
   # see packages/sensors.yaml) ---
+  # Previous 2 raw voltage readings, used to median-of-3 each new reading
+  # before it ever reaches the trend/confirm-count logic below - see the
+  # battery_voltage lambda comment for the real bug this fixes.
+  - id: batt_v_hist1
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: batt_v_hist2
+    type: float
+    restore_value: false
+    initial_value: '0'
   - id: prev_batt_v
     type: float
     restore_value: false
