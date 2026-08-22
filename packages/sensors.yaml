@@ -346,7 +346,7 @@ sensor:
             send_first_at: 1
         - lambda: |-
             const float REST_OFFSET_BMP180   = 2.46f;  // measured, see above
-            const float CHARGE_OFFSET_BMP180 = 0.0f;   // TODO: measure
+            const float CHARGE_OFFSET_BMP180 = 0.0f;   // measured: no constant works, see SCD41 above
 
             float extra = REST_OFFSET_BMP180;
             if (id(is_charging)) extra += CHARGE_OFFSET_BMP180;
