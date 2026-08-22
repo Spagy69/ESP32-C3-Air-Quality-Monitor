@@ -183,21 +183,23 @@ deep_sleep:
 
 ## Známé drobnosti k úklidu (nekritické, ale stojí za zmínku)
 
-1. **Mrtvý kód po odstranění medium-hold gesta:** v 5s-hold handleru zůstal řádek `id(long_hold_5s_fired) = true;`, který už nic nečte (dřív ho kontroloval odstraněný `on_release` handler). Globals `button_press_start_ms`, `long_hold_5s_fired`, `last_release_held_ms` jsou teď taky nepoužívané. Neškodí to funkčně, ale je to nepořádek - klidně smazat při další úpravě souboru.
-2. **`esp_sleep_get_wakeup_cause()`** - viz výš, neověřeno na kompilaci.
-3. **`wakeup_pin` syntaxe pro ESP32-C3** - taky neověřeno na reálném hardwaru (viz komentář přímo v YAML).
+1. ~~Mrtvý kód po odstranění medium-hold gesta~~ **HOTOVO** - `button_press_start_ms`, `long_hold_5s_fired` i `last_release_held_ms` jsou pryč, v repu už nejsou ani jednou.
+2. ~~`esp_sleep_get_wakeup_cause()` neověřeno na kompilaci~~ **HOTOVO** - kompiluje se, `esp_sleep.h` se do buildu dostane přes `deep_sleep_component.h`, extra include není potřeba. Používá se to teď i v `on_boot` pro `cold_boot` / `wake_was_timer`.
+3. **`wakeup_pin` syntaxe pro ESP32-C3** - pořád neověřeno **na reálném hardwaru**. Probouzení časovačem funguje (9 cyklů v `data/2026-08-22-cesta-wake-cycles/`), probuzení **tlačítkem** nikdo nezkusil.
 
 ---
 
 ## Otevřené úkoly (shrnutí, seřazeno podle priority)
 
-1. **Přeměřit statický teplotní offset po fyzickém redesignu krytu** (senzory teď oddělené od zdroje tepla - stará hodnota 5.6°C/1.74°C je pravděpodobně moc vysoká).
-2. **Zkompilovat a otestovat aktuální YAML** - poslední várka změn (menu redesign, deep sleep hooks, odstranění medium-hold gesta) ještě nebyla na reálném hardwaru ověřená kompilace ani chování.
-3. Zvážit, jestli/jak **znovu zapnout dynamickou korekci self-heatingu** - buď po fyzickém redesignu ukáže, že už není potřeba (self-heating dost malý), nebo pokud pořád bude problém, bude potřeba model závislý na SOC/proudu, ne jen na čase.
-4. **ASC toggle (fáze 3)** - rizikovější, raw I2C implementace, zatím neřešeno.
-5. Kalibrace děliče napětí přes celý rozsah (ověřený jen bod 4.15V, viz README Known Issues).
-6. Notifikace na nízké napětí v HA (navrženo, neimplementováno - je to v HA automatizacích, ne ve firmwaru).
-7. Úklid mrtvého kódu (viz sekce výš).
+> Tenhle seznam je z dřívější fáze. Většina je hotová - **aktuální stav je v sekci v2 STATUS nahoře**, tohle je tu jen kvůli historii.
+
+1. ~~Přeměřit statický teplotní offset po fyzickém redesignu krytu~~ **HOTOVO** - změřeno proti referenčnímu teploměru, 6.7 / 2.46 (bod 2e v v2 STATUS). Odhad "stará hodnota je moc vysoká" byl mimo, ve skutečnosti byly obě moc **nízké**.
+2. ~~Zkompilovat a otestovat aktuální YAML~~ **ČÁSTEČNĚ** - kompiluje se a běží na hardwaru, ale menu, CO2 alarm a probuzení tlačítkem pořád nikdo neproklikal. Viz seznam testů v v2 STATUS.
+3. ~~Znovu zapnout dynamickou korekci self-heatingu~~ **ROZHODNUTO: ne.** Dva záznamy nabíjení ukazují, že teplo závisí na stavu baterky (+3.7 °C z prázdné, +2.35 °C ze 64 %), takže model podle času by selhal stejně jako v v1. Značí se to vlnovkou.
+4. ~~ASC toggle (fáze 3)~~ **HOTOVO** - implementováno přes raw I2C (`0x2416`), položka **ASC KALIBRACE** v menu. Na hardwaru ale neozkoušené.
+5. **Kalibrace děliče napětí přes celý rozsah** - pořád otevřené, jediný ověřený bod je 4.15 V. Poslední nedodělaná kalibrace v projektu.
+6. **Notifikace na nízké napětí v HA** - navrženo, neimplementováno (patří to do HA automatizací, ne do firmwaru).
+7. ~~Úklid mrtvého kódu~~ **HOTOVO** (viz sekce výš).
 
 ---
 
