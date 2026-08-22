@@ -17,14 +17,31 @@ esphome:
         # esp_sleep.h comes in via the deep_sleep component's header, which
         # this config already uses.
         - lambda: |-
-            id(cold_boot) = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
+            auto cause = esp_sleep_get_wakeup_cause();
+            id(cold_boot)      = (cause == ESP_SLEEP_WAKEUP_UNDEFINED);
+            id(wake_was_timer) = (cause == ESP_SLEEP_WAKEUP_TIMER);
         - delay: 1500ms
     - priority: -100
       then:
+        # On a scheduled timer wake nobody is looking - the device is only
+        # up to take a reading and publish it. Lighting the OLED for the
+        # full 30s window every few minutes is pure battery waste in
+        # exactly the mode that exists to save battery, so keep it dark.
+        #
+        # Only ESP_SLEEP_WAKEUP_TIMER is treated this way. A button wake or
+        # a cold start brings the display up as before - and if we ever
+        # can't tell why we woke, the display wins. Failing towards "show
+        # something" is the safe direction for a device whose only output
+        # is that screen.
+        #
+        # The 30s awake window itself is unchanged: it's what WiFi, the API
+        # connection and a real sensor reading need, and the display was
+        # never what determined it.
         - lambda: |-
             id(stay_on) = false;
-            id(display_on) = true;
+            id(display_on) = !id(wake_was_timer);
             id(wake_timestamp) = millis();
+            if (id(wake_was_timer)) id(oled_display).turn_off();
         - script.execute: display_auto_off
     - priority: -150
       then:

@@ -14,6 +14,15 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
+  # True when this boot was a scheduled deep-sleep timer wake, i.e. nobody
+  # asked for anything - the device is only up to take a reading and go
+  # back to sleep. The display stays dark for those, see the on_boot step
+  # in air-quality-monitor.yaml. A button wake or a cold start leaves this
+  # false and the display comes up as normal.
+  - id: wake_was_timer
+    type: bool
+    restore_value: false
+    initial_value: 'false'
   - id: stay_on
     type: bool
     restore_value: false

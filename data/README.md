@@ -172,6 +172,36 @@ Vlhkost šla 77 → 60 % zatímco teplota rostla 23.8 → 28.6. Přepočet přes
 
 CO2 spadlo 2400 → 1540 mezi 16:35 a 17:35 a pak znovu 1750 → 1250 kolem 19:45 - otevřené dveře, normální větrání. Nic se senzorem.
 
+### `2026-08-22-cesta-wake-cycles/` - 50 min, 9 cyklů probuzení z deep sleepu
+
+Test s jedinou otázkou: **spouští startovní skok SCD41 i probuzení z deep sleepu?** Nastaveno DEEP SLEEP zapnuto + HA připojení zapnuté (tedy CUSTOM, ne čistá CESTA - v čisté CESTA je WiFi vypnutá a do HA by se nedostalo nic), interval 5 min. Ve 20:42 lokálně odpojena nabíječka.
+
+**Odpověď: ano, opakuje se to při každém probuzení, a je to horší než při studeném startu.**
+
+| probuzení | SCD41 1. čtení | SCD41 2. čtení (+10 s) | BMP180 | SCD41 − BMP180 |
+|---|---|---|---|---|
+| 20:47 | 29.637 | 28.908 | 24.276 | **+5.36** |
+| 20:53 | 29.386 | 28.631 | 23.987 | **+5.40** |
+| 20:58 | 29.173 | 28.428 | 23.751 | **+5.42** |
+| 21:04 | 28.857 | 28.120 | 23.485 | **+5.37** |
+| 21:09 | 28.574 | 27.851 | 23.151 | **+5.42** |
+| 21:15 | 28.470 | 27.720 | 22.932 | **+5.54** |
+| 21:20 | 28.355 | 27.640 | 22.823 | **+5.53** |
+| 21:26 | 28.305 | 27.581 | 22.738 | **+5.57** |
+| 21:31 | 28.262 | 27.509 | 22.677 | **+5.59** |
+
+Devět probuzení, pokaždé stejný obrázek: SCD41 startuje **~5.5 °C nad** BMP180 a za 10 s spadne o **0.72-0.76 °C**. Ta konzistence je pozoruhodná - rozptyl prvního rozdílu je 5.36 až 5.59, rozptyl poklesu 0.72 až 0.76.
+
+Pro srovnání první blok v 20:42, ještě než začalo uspávání (zařízení běželo v kuse): SCD41 24.879 vs BMP180 24.572, tedy **rozdíl 0.31 °C** - úplně normální. Takže dokud běží nepřetržitě, oba senzory si odpovídají; jakmile se začne uspávat, je SCD41 o pět stupňů vedle. Vlhkost s tím jde ruku v ruce: 61.8 % v tom prvním bloku, pak 46.7-50.6 % při každém probuzení, tj. o ~13 % míň.
+
+BMP180 přitom klesá naprosto hladce (24.57 → 22.68 za 50 min, jak krabička ve spánku chladne) a **žádný skok nemá**.
+
+#### Co z toho plyne
+
+Mechanismus zapadá do toho, co ukázaly předchozí záznamy: první čtení po `start_periodic_measurement` vypadá, jako by na něj ještě nebyl aplikovaný `temperature_offset` (5.6 °C), a ten se "dotáhne" během ~2 minut. Sedí to na obojí - při studeném startu je čip stejně studený jako krabička, takže chybějící offset dělá rozdíl proti BMP180 jen ~1.7-2.1 °C; tady čip celou dobu spánku běžel dál a je proti chladnoucí krabičce rozehřátý, takže totéž dělá ~5.5 °C.
+
+**Prakticky: v režimu s deep sleepem je teplota a vlhkost ze SCD41 nepoužitelná.** 30 s vzhůru je řádově míň, než těch ~2 min, co potřebuje na dotažení. Firmware to od té doby zahazuje (první 3 min po bootu), takže se do HA aspoň nedostane nesmysl - ale znamená to, že v CESTA nemá odkud teplotu brát. Nejnadějnější řešení je **brát ji z BMP180**, který je v těch samých datech čistý.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -181,6 +211,6 @@ CO2 spadlo 2400 → 1540 mezi 16:35 a 17:35 a pak znovu 1750 → 1250 kolem 19:4
 ### Co ještě chybí změřit
 
 - **Klidový offset bez nabíječky** (~45 min, poslední chybějící kus kalibrace). Předchozí měření s teploměrem proběhlo se zapojenou nabíječkou, takže i "ustálený" stav nesl zbytkové teplo. Postup: odpojit nabíječku, nechat 45 min běžet na baterku, pak zapsat obě hodnoty z displeje/HA a hodnotu z lihového teploměru položeného vedle. Podle toho se doladí `temperature_offset` a `REST_OFFSET_BMP180`. Ideálně odečíst teploměr **třikrát po sobě** (rozptyl odečtu je na tomhle typu ±0.5 °C, viz `reference-thermometer.md`).
-- **CESTA transient test** - potvrzeno, že úvodní skok je artefakt senzoru (viz `cold-start` výš), ale ještě není ověřené, jestli ho spouští i probuzení z deep sleepu. Rozdíl je v tom, že při brownoutu i studeném startu senzor ztratil napájení, kdežto v deep sleepu 3V3 běží dál a restartuje se jen měření. Přepnout na CESTA, nechat 3-4 cykly probuzení, exportovat teplotu SCD41 a BMP180.
+- ~~CESTA transient test~~ **HOTOVO**, viz `2026-08-22-cesta-wake-cycles/` výš - skok se opakuje při každém probuzení a je ~5.5 °C.
 - **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.
