@@ -162,6 +162,8 @@ Vypadá to, že oba senzory čtou zhruba **o půl stupně až stupeň víc**, ne
 
 Skutečné nabíjení skončilo kolem **18:10-18:25** (napětí přestalo růst na 4.150 V a začalo mírně klesat). Detekce to nezachytila, protože pokles po dobití je jen ~0.0009 V/min, což se nikdy nedostane přes práh -0.01 V proti klouzavému baseline. Zůstalo tedy hodinu viset zapnuté. Tady to nevadilo (teplo v tu dobu už bylo skoro pryč), ale znamená to, že se na `Charging` nedá spolehnout jako na indikátor "právě teď teče proud".
 
+> Kvůli tomu vzniklo pravidlo "vysoko a bez pohybu". První verze byla ale naladěná **jen na tenhle jeden záznam** a na dalším neuměla vůbec nic - viz `2026-08-23-charging-warm/` níž.
+
 #### 4. Potvrzení té zamrzlé hodnoty z minula
 
 V 16:15, tedy **před** bootem, HA pořád ukazovalo SCD41 **27.43 °C** a BMP180 23.58 - přesně ty hodnoty z brownoutu při vybití v předchozím záznamu. Přímé potvrzení, že se to bez opravy zaseklo a viselo tam hodiny.
@@ -246,6 +248,76 @@ Zajímavost: publikovaných 28.00 °C u BMP180 je **už zfiltrovaná** hodnota. 
 
 > 93.8 % je blízko rosnému bodu. Dech je nasycený při ~34 °C a když v krabičce zchladne na 24 °C, je hluboko za saturací. Jednorázově nevadí, opakovaně tam dýchat ale znamená riziko skutečné kondenzace na senzorech.
 
+### `2026-08-23-charging-warm/` - 1 h, nabíjení ze 64 % s už ustálenou krabičkou
+
+Protějšek k `charging-from-empty`. Tam byla baterka na nule a krabička studená, takže se startovní transient, zahřívání skříňky i teplo z nabíjení míchaly dohromady. Tady bylo zařízení **hodiny v provozu a plně ustálené**, teprve pak se v 00:19:54 (lokálně) připojila nabíječka - takže jediné, co se v datech hýbe, je teplo z nabíjení. Export je zase jeden soubor (`all-sensors.csv`).
+
+Záznam začíná v ocasu předchozího dýchacího testu, proto ta úvodní vlhkost 82 % a CO2 1342 ppm.
+
+#### 1. Nejlepší dosavadní potvrzení offsetů
+
+Před připojením nabíječky:
+
+| SCD41 | BMP180 | rozdíl |
+|---|---|---|
+| 24.006 | 24.014 | **−0.009 °C** |
+
+Devět tisícin stupně. Po dýchacím testu (−0.06 až −0.11) je to druhé nezávislé potvrzení, že `temperature_offset 6.7` a `REST_OFFSET_BMP180 2.46` sedí vůči sobě. O absolutní přesnosti to neříká nic - to umí jen teploměr vedle.
+
+#### 2. Teplo z nabíjení je hrb, ne schod - a jeho výška závisí na stavu baterky
+
+| od připojení | SCD41 | nad klidem |
+|---|---|---|
+| 0 min | 24.01 | +0.0 |
+| 2 min | 24.07 | +0.1 (začíná se hýbat) |
+| 10 min | 25.28 | +1.3 |
+| 20 min | 26.12 | +2.1 |
+| **28 min** | **26.32** | **+2.31 (vrchol)** |
+| 40 min | 26.09 | +2.1 |
+| 50 min | 25.63 | +1.6 |
+| 62 min | 25.38 | **+1.37 (a pořád klesá)** |
+
+BMP180 dělá totéž, vrchol +2.41 °C v 27 min.
+
+Klíčové srovnání: **z prázdné baterky to bylo +3.7 °C, ze 64 % jen +2.35 °C.** Stejná krabička, stejná nabíječka, stejná místnost - rozdíl 1.4 °C způsobil jen jiný počáteční stav baterky. Tím se argument "žádná konstanta to neopraví" mění z úvahy na **změřený fakt**: jedna konstanta je vedle o 1.4 °C už jen mezi těmito dvěma případy.
+
+A `~` na displeji je tím pádem správná volba i proto, že teplo po ~28 min zase samo klesá - i "správná" konstanta by po chvíli přepravovala.
+
+#### 3. Který senzor cítí teplo dřív
+
+Rozdíl SCD41 − BMP180 se během hrbu mění: při náběhu je SCD41 **výš** (až +0.087 °C), při klesání **níž** (až −0.22 °C). Obojí znamená totéž - SCD41 se hýbe dřív, tedy leží tepelně blíž zdroji (baterka / TP4056).
+
+Není to v rozporu s dýchacím testem, kde byl rychlejší naopak BMP180 o 1.7 °C. Tam šlo teplo **vzduchem** za desítky sekund a rozhodovala tepelná kapacita čipu; tady jde **materiálem** desítky minut a rozhoduje vzdálenost od zdroje. Jiný mechanismus, jiné pořadí.
+
+#### 4. Detekce konce nabíjení: pravidlo z minule tady neuděla vůbec nic
+
+Napětí vyrostlo 3.77 → 4.118 V a v 01:00:55 **v jednom kroku spadlo o 0.022 V** na 4.095, pak se ustálilo na ~4.083 a dvacet minut se drželo. Ten skok odpovídá konci nabíjení - zmizí úbytek na vnitřním odporu článku (0.022 V ≈ 500 mA × 44 mΩ).
+
+Jenže tehdejší práh byl `FULL_V = 4.10`. **Ta hranice už nikdy nebyla překročena, takže pravidlo nesepnulo ani jednou** a `Charging Duration` běželo dál až do konce záznamu (60 min).
+
+Proč: obě nabíjení skončila na **jiném napětí** - 4.120 V (z prázdné) a 4.083 V (odsud). 37 mV od sebe na stejném hardwaru. Absolutní hladina tedy nic negeneralizuje, generalizuje jen **plochost**. Pravidlo se proto přeladilo: `FULL_V` je teď jen volná pojistka na 4.05 a rozhoduje `FULL_FLAT_DELTA` (0.001 → 0.002, protože zdejší plató má kroky až 0.0019 V).
+
+Přeměřeno přes oba záznamy:
+
+| | z prázdné | zahřáté |
+|---|---|---|
+| staré 4.10 / 0.001 / 5 | 18:19 (+125 min) ✓ | **nikdy** ✗ |
+| nové 4.05 / 0.002 / 5 | 18:19 (+125 min) ✓ | 01:07 (+48 min) ✓ |
+
+`FULL_V` 4.00-4.08 dává stejný výsledek a `FULL_CONFIRM` 4-10 taky - obojí sedí v ploché části parametrů, ne na hraně.
+
+#### 5. Plná baterka ukazovala 90 %
+
+Vedlejší nález ze stejného napětí. Mapa procent byla lineární 3.0-4.2 V, ale plno je naměřeno na 4.083-4.120 V, takže **dobitá baterka hlásila 90-93 % a stovky se nedalo dosáhnout nikdy**. Horní konec se proto vzal z měření (4.12 V), ne z katalogového 4.2.
+
+Otevřené zůstává, jestli článek opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje skutečných 4.2 V o ~2 %. Rozhodne multimetr (viz TODO u děliče v `sensors.yaml`) - pro procenta je to ale jedno, protože se teď berou z toho, co ADC reálně hlásí při dobití.
+
+#### 6. Ostatní veličiny
+
+- **Vlhkost** 81.9 → 64.0 %. Zhruba 10 bodů z toho vysvětlí ohřátí o 2.3 °C (stejná voda ve vzduchu, vyšší teplota = nižší RH), zbytek je odeznívající vlhkost z dýchacího testu.
+- **CO2** 1342 → 1247 (00:46) → 1318. Doznívání dýchacího testu a pak normální nárůst v zavřené místnosti.
+- **Tlak** 966.2-966.6 hPa přes celou hodinu, žádný výstřel - median-of-3 dělá svoje.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -256,5 +328,6 @@ Zajímavost: publikovaných 28.00 °C u BMP180 je **už zfiltrovaná** hodnota. 
 
 - ~~Klidový offset bez nabíječky~~ **HOTOVO**, viz `2026-08-22-rest-offset/` výš - oba offsety jsou teď změřené proti referenci.
 - ~~CESTA transient test~~ **HOTOVO**, viz `2026-08-22-cesta-wake-cycles/` výš - skok se opakuje při každém probuzení a je ~5.5 °C.
-- **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
+- ~~Teploty při nabíjení~~ **HOTOVO**, dvakrát: `2026-08-22-charging-from-empty/` (+3.7 °C) a `2026-08-23-charging-warm/` (+2.35 °C). `CHARGE_OFFSET_*` zůstávají `0.0` **záměrně** - ty dva záznamy dokazují, že konstanta neexistuje.
+- **Napětí děliče multimetrem** - dnes je násobič 3.2 ověřený v jediném bodě (4.15 V). Chce to odečty kolem 3.5 a 3.8 V. Zároveň to rozhodne, jestli plná baterka opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.

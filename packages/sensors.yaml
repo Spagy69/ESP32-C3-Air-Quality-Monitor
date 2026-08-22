@@ -244,6 +244,15 @@ sensor:
         # tried, and it overshot by ~4C in the field the moment the charge
         # conditions differed from the data it was fitted to.
         #
+        # A second capture confirms that dependence directly rather than by
+        # argument. data/2026-08-23-charging-warm/ starts the charge from
+        # 64% with the box already settled at room temperature, and peaks at
+        # only +2.35C after 28min - against +3.7C from flat. Same enclosure,
+        # same charger, same room, 1.4C apart purely because the battery
+        # started fuller. Any constant would already be 1.4C wrong across
+        # just these two runs. It also shows the shape is a hump, not a
+        # step: back down to +1.4C by 62min while still plugged in.
+        #
         # So the firmware does not pretend to correct it. `Charging` and
         # `Charging Duration` (below) are published to HA so charging-time
         # readings can be filtered out there, and the display marks the
@@ -503,25 +512,49 @@ sensor:
           // constant-current phase climbs ~0.004 V per 60s reading; a
           // finished one moves less than 0.001.
           //
-          // The thresholds were swept against that capture rather than
-          // picked by feel, because the obvious choice sat on a cliff: at
-          // FULL_FLAT_DELTA 0.002 the answer swings from 17:52 to 18:18
-          // depending on whether FULL_CONFIRM is 3 or 4 - a 27-minute
-          // difference from one parameter step. At 0.001 every confirm
-          // count from 3 to 10 lands between 18:13 and 18:26, i.e. inside
-          // the real end-of-charge window, so this sits in a flat part of
-          // the parameter space instead of next to an edge.
+          // The thresholds are swept against real captures rather than
+          // picked by feel. The first attempt used only the charge-from-
+          // empty capture and landed on 4.10 / 0.001 / 5, which fires
+          // there at 18:19. A second capture
+          // (data/2026-08-23-charging-warm/, charger plugged in at ~64%
+          // with the box already at room temperature) showed that tuning
+          // is worthless: that battery tops out at 4.083 V measured, so
+          // `v >= 4.10` is never true after the charge finishes and the
+          // rule NEVER fires. The old numbers had been fitted to one
+          // battery state, not to the hardware.
           //
-          // FULL_V barely matters (anything from 4.00 to 4.12 gives the
-          // same answer) - flatness is what actually discriminates, and
-          // the voltage check is just a guard so a stalled charge at low
-          // voltage can't be mistaken for a finished one.
+          // Two things separate a finished charge from a running one, and
+          // only one of them generalises:
+          //
+          //   - Flatness DOES. A battery in constant-current climbs
+          //     ~0.004 V per 60s reading; a finished one moves less than
+          //     0.002. True in both captures.
+          //   - The absolute level does NOT. The two captures plateau at
+          //     4.120 V and 4.083 V - 37 mV apart on the same hardware.
+          //     Anything tuned tightly to one of them breaks on the other.
+          //
+          // So FULL_V is demoted to a loose guard (only there so a charge
+          // stalled at 3.5 V can't be read as finished) and flatness does
+          // the discriminating. Swept over both captures:
+          //
+          //   FULL_V     4.00-4.08 all identical; 4.09+ never fires on
+          //              the warm capture. 4.05 keeps ~30 mV of margin
+          //              below the lower of the two plateaus.
+          //   DELTA      0.002 needed - the warm plateau has 60s steps up
+          //              to 0.0019 V, so 0.001 rejects it as "still
+          //              moving" and never confirms.
+          //   CONFIRM    4..10 all land in the right window (empty
+          //              18:18-18:26, warm 01:06-01:13). Only 3 is too
+          //              eager, firing at 17:52 while still climbing.
+          //
+          // Result: fires at 4.151 V / +125 min on the empty charge and
+          // 4.085 V / +48 min on the warm one. Both correct.
           //
           // If the thresholds are ever too tight for a noisier battery the
           // rule simply never fires and the 3h backstop below takes over -
           // degraded, not broken.
-          const float FULL_V          = 4.10f;
-          const float FULL_FLAT_DELTA = 0.001f;
+          const float FULL_V          = 4.05f;
+          const float FULL_FLAT_DELTA = 0.002f;
           const int   FULL_CONFIRM    = 5;
 
           float step = v - id(prev_batt_v);
@@ -553,8 +586,23 @@ sensor:
       id(cached_battery_v) = v;
       return v;
 
-  # Rough % estimate (linear, 3.0V = 0%, 4.2V = 100%) - see README Known
+  # Rough % estimate (linear, 3.0V = 0%, 4.12V = 100%) - see README Known
   # Issues, not a precise fuel-gauge curve.
+  #
+  # The top of the range is measured, not the nominal 4.2 V. Two full
+  # charges settle at 4.120 V (data/2026-08-22-charging-from-empty/, a
+  # complete 4h charge) and 4.083 V (data/2026-08-23-charging-warm/).
+  # Against a 4.2 V top, the first of those reads 93% and the second 90% -
+  # i.e. the display could never show a full battery, which reads as a
+  # fault rather than as the rounding it is.
+  #
+  # Whether the cell truly sits at 4.12 V or the divider under-reads a real
+  # 4.2 V by ~2% is still open (see the multiplier TODO above), and this
+  # map deliberately does not care: taking the top from what the ADC
+  # actually reports when charging finishes makes the percentage
+  # self-consistent either way. The 3.0 V bottom is still nominal - if the
+  # divider does under-read, 0% arrives slightly early, which is the safe
+  # direction.
   - platform: template
     name: "Battery Level"
     id: battery_level
@@ -571,8 +619,11 @@ sensor:
       // this shouldn't trigger; it costs one branch to not depend on that.
       if (!id(battery_voltage).has_state()) return {};
 
+      const float BATT_EMPTY_V = 3.00f;
+      const float BATT_FULL_V  = 4.12f;  // measured, see comment above
+
       float v = id(battery_voltage).state;
-      float pct = (v - 3.0) / (4.2 - 3.0) * 100.0;
+      float pct = (v - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100.0f;
       if (pct > 100) pct = 100;
       if (pct < 0) pct = 0;
       id(cached_battery_pct) = pct;
