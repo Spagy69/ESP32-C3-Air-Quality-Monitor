@@ -75,7 +75,8 @@ sensor:
       # trigger point) avoids flicker if the reading hovers near the line.
       on_value:
         - lambda: |-
-            const float CO2_ALARM_TRIGGER_PPM = 3000.0f;  // TODO: confirm threshold
+            // Thresholds confirmed with the user, not placeholders.
+            const float CO2_ALARM_TRIGGER_PPM = 3000.0f;
             const float CO2_ALARM_CLEAR_PPM   = 2700.0f;
 
             // --- Arming: don't judge anything until the readings settle ---
@@ -432,6 +433,7 @@ sensor:
             id(charge_start_ms) = millis();
             id(charge_confirm_count) = 0;
             id(discharge_confirm_count) = 0;
+            id(full_confirm_count) = 0;
           }
         } else {
           if (trend < -0.01f) {
@@ -443,14 +445,68 @@ sensor:
             id(is_charging) = false;
             id(discharge_confirm_count) = 0;
             id(charge_confirm_count) = 0;
+            id(full_confirm_count) = 0;
+          }
+
+          // --- End of charge: "high and flat" ---
+          // The trend rule above cannot see a finished charge. Once the
+          // TP4056 is done the voltage stops climbing and then sags by only
+          // ~0.0009 V/min - two orders of magnitude short of the -0.01
+          // threshold, so it never trips and the flag used to hang around
+          // until the 3h safety net below finally cleared it. Measured in
+          // data/2026-08-22-charging-from-empty/: charging actually
+          // finished around 18:10 (voltage topped out at 4.150 and began
+          // drifting down), but `Charging` stayed on until 19:25 - exactly
+          // 3h00m03s after it latched, i.e. the safety net, not detection.
+          //
+          // So watch for the other signature instead: a voltage that is
+          // both high AND has stopped moving. A battery still in the
+          // constant-current phase climbs ~0.004 V per 60s reading; a
+          // finished one moves less than 0.001.
+          //
+          // The thresholds were swept against that capture rather than
+          // picked by feel, because the obvious choice sat on a cliff: at
+          // FULL_FLAT_DELTA 0.002 the answer swings from 17:52 to 18:18
+          // depending on whether FULL_CONFIRM is 3 or 4 - a 27-minute
+          // difference from one parameter step. At 0.001 every confirm
+          // count from 3 to 10 lands between 18:13 and 18:26, i.e. inside
+          // the real end-of-charge window, so this sits in a flat part of
+          // the parameter space instead of next to an edge.
+          //
+          // FULL_V barely matters (anything from 4.00 to 4.12 gives the
+          // same answer) - flatness is what actually discriminates, and
+          // the voltage check is just a guard so a stalled charge at low
+          // voltage can't be mistaken for a finished one.
+          //
+          // If the thresholds are ever too tight for a noisier battery the
+          // rule simply never fires and the 3h backstop below takes over -
+          // degraded, not broken.
+          const float FULL_V          = 4.10f;
+          const float FULL_FLAT_DELTA = 0.001f;
+          const int   FULL_CONFIRM    = 5;
+
+          float step = v - id(prev_batt_v);
+          if (step < 0.0f) step = -step;
+          if (v >= FULL_V && step < FULL_FLAT_DELTA) {
+            id(full_confirm_count)++;
+          } else {
+            id(full_confirm_count) = 0;
+          }
+          if (id(full_confirm_count) >= FULL_CONFIRM) {
+            id(is_charging) = false;
+            id(full_confirm_count) = 0;
+            id(discharge_confirm_count) = 0;
+            id(charge_confirm_count) = 0;
           }
         }
       } else {
         id(batt_v_slow_avg) = v;
       }
-      // Safety net: if the disconnect never triggers a clean confirmed
-      // drop (e.g. very slow tail-off), force "not charging" after 3h so
-      // the flag can't get stuck on indefinitely.
+      // Last-resort backstop, now that both a real disconnect (the trend
+      // rule) and a finished charge (high and flat) are detected above.
+      // Nothing known should reach this any more - if `Charging Duration`
+      // ever shows a clean 180.0min again, one of those two rules missed
+      // something and this is covering for it.
       if (id(is_charging) && (millis() - id(charge_start_ms) > 3UL * 60UL * 60UL * 1000UL)) {
         id(is_charging) = false;
       }
@@ -467,6 +523,15 @@ sensor:
     device_class: battery
     update_interval: 60s
     lambda: |-
+      // Bail out if the voltage sensor hasn't produced anything yet.
+      // Without this, .state is NaN, every comparison against it is false
+      // so the clamps below don't catch it, and the NaN lands in
+      // cached_battery_pct - which is flash-backed, so the display would
+      // come up showing "nan%" on the next boot. In practice the voltage
+      // sensor is registered first and runs first on a shared 60s tick, so
+      // this shouldn't trigger; it costs one branch to not depend on that.
+      if (!id(battery_voltage).has_state()) return {};
+
       float v = id(battery_voltage).state;
       float pct = (v - 3.0) / (4.2 - 3.0) * 100.0;
       if (pct > 100) pct = 100;

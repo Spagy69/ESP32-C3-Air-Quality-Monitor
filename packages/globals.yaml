@@ -73,6 +73,13 @@ globals:
     type: int
     restore_value: false
     initial_value: '0'
+  # Counts consecutive readings that look like a finished charge (high and
+  # no longer moving) - the signature the trend rule above can't see. See
+  # the "End of charge" block in packages/sensors.yaml.
+  - id: full_confirm_count
+    type: int
+    restore_value: false
+    initial_value: '0'
 
   # --- temperature/humidity correction bookkeeping ---
   - id: temp_raw_scd41
