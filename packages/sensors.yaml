@@ -5,6 +5,36 @@
 # BMP180/battery stay at 60s (no reason to poll faster). SCD41 polls much
 # faster - see the update_interval comment right below for why.
 # ---------------------------------------------------------------------------
+# scd41_stop_before_sleep
+#
+# Both paths into deep sleep (packages/menu.yaml: the display_auto_off
+# script and the manual single-click handler) send this sensor
+# stop_periodic_measurement (0x3F86) on the way out. Without it deep sleep
+# barely saves anything, because the SCD41 is not on the ESP32's power
+# domain - the 3V3 rail stays up through sleep and the sensor just carries
+# on measuring every 5s with nobody listening.
+#
+# The cost of that is not small. The datasheet puts one measurement at
+# 243mJ, so at the 5s periodic rate that is 243mJ / 5s / 3.3V = ~14.7mA
+# drawn continuously, against 0.15mA typical in idle - roughly a hundred
+# times more, and more than the sleeping ESP32 by orders of magnitude.
+#
+# It shows up in the real captures: with a 5min sleep interval and 30s
+# awake - a tenth of the time powered up - the measured discharge was only
+# ~15% slower than never sleeping at all (-0.070 V/h against -0.082 to
+# -0.089 V/h). Working back from the always-on figure gives ~34mA total,
+# which is about the ESP with WiFi plus exactly this sensor.
+#
+# There is independent evidence the sensor really does keep running: the
+# temperature transient measured at every wake is ~5.5C, far bigger than
+# the ~2C seen from a cold start, and that only makes sense if the chip
+# stayed self-heated through the sleep - which it can only do by measuring.
+# See data/2026-08-22-cesta-wake-cycles/.
+#
+# Safe to send even though ESPHome's own setup() sends stop again on the
+# next boot, i.e. to an already-idle sensor: that is exactly what happens
+# on every cold start (the SCD4x powers up idle), and cold starts work -
+# see data/2026-08-22-cold-start/.
 sensor:
   - platform: scd4x
     id: scd41_hub

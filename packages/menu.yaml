@@ -37,6 +37,9 @@ script:
                       id(display_on) = false;
                       id(oled_display).turn_off();
                       id(deep_sleep_1).set_sleep_duration(id(sleep_interval_minutes) * 60UL * 1000UL);
+                      // Park the SCD41 before sleeping - see the comment on
+                      // scd41_stop_before_sleep in packages/sensors.yaml.
+                      id(scd41_hub).write_command((uint16_t) 0x3F86);  // stop_periodic_measurement
                   - deep_sleep.enter: deep_sleep_1
                 else:
                   - lambda: |-
@@ -120,6 +123,9 @@ binary_sensor:
                   id(manual_click_should_sleep) = false;
                   return go;
               then:
+                # Same parking of the SCD41 as in display_auto_off above -
+                # this is the other way into deep sleep, so it needs it too.
+                - lambda: 'id(scd41_hub).write_command((uint16_t) 0x3F86);'
                 - deep_sleep.enter: deep_sleep_1
 
       # HOLD 5s+ - outside the menu: open it. Inside: confirm/toggle the
