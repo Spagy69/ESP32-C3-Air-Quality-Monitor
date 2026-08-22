@@ -182,7 +182,17 @@ display:
       // different, much shorter effect that DOES repeat on every wake) is
       // handled separately by a filter in packages/sensors.yaml.
       const uint32_t WARMUP_MS = 45UL * 60UL * 1000UL;
-      const char *warm = (id(cold_boot) && millis() < WARMUP_MS) ? "~" : "";
+
+      // The same marker also covers charging, which turns out to be the
+      // bigger of the two effects: measured against a reference thermometer
+      // (data/2026-08-22-charging-from-empty/) the box ran up to +3.7C
+      // above its settled reading while charging a flat battery, then came
+      // back down as the charge current tapered off. There is no offset
+      // that fixes this - see the CHARGE_OFFSET comment in
+      // packages/sensors.yaml for why a constant can't work - so the
+      // honest thing is to say the number isn't trustworthy right now.
+      bool warming  = id(cold_boot) && millis() < WARMUP_MS;
+      const char *warm = (warming || id(is_charging)) ? "~" : "";
 
       switch (page) {
         case 0:

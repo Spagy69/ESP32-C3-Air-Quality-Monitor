@@ -179,20 +179,33 @@ sensor:
             const uint32_t SCD41_SETTLE_MS = 3UL * 60UL * 1000UL;
             if (millis() < SCD41_SETTLE_MS) return {};
             return x;
-        # Flat charging-time offset instead of the old v1 time-decay curve
-        # model. The curve model (fit on a single charge cycle) overshot by
-        # ~4C in the field when charge conditions differed from the
-        # training data - a single constant, subtracted only while
-        # is_charging is true, can't overshoot like that even if it's not
-        # perfectly tuned. v2's physical sensor/heat-source separation
-        # should also make this number small.
-        # TODO(v2 calibration): measure with a reference thermometer while
-        # charging vs. at rest on the new enclosure, replace 0.0f.
-        # `Charging` / `Charging Duration` (below) are still published to
-        # HA regardless, so charging-time readings can also be filtered
-        # there if the flat offset isn't precise enough for some use.
+        # CHARGE_OFFSET stays 0, and that is now a measured decision rather
+        # than a placeholder.
+        #
+        # Measured against a reference thermometer over a full charge from a
+        # flat battery (data/2026-08-22-charging-from-empty/): the reading
+        # ran +3.7C above its own settled value at the peak of the constant-
+        # current phase, held there for ~30min, then decayed back to 0 over
+        # the next ~1.5h as the charge current tapered. Same shape on the
+        # BMP180 (+3.8C), so it is the whole enclosure heating up, not one
+        # sensor misbehaving.
+        #
+        # Why no constant can fix that: the heat tracks the charge CURRENT,
+        # and the current depends on how empty the battery was. Charging
+        # from flat gives an hour at full current; topping up from 90% gives
+        # almost none. A single number would have to be wrong by up to
+        # +-3.7C depending on the situation, and the mean over this charge
+        # (~1.8C) would be wrong in BOTH directions. A time-since-charge-
+        # start curve fails for the same reason - it is exactly what v1
+        # tried, and it overshot by ~4C in the field the moment the charge
+        # conditions differed from the data it was fitted to.
+        #
+        # So the firmware does not pretend to correct it. `Charging` and
+        # `Charging Duration` (below) are published to HA so charging-time
+        # readings can be filtered out there, and the display marks the
+        # value with "~" while charging (packages/display.yaml).
         - lambda: |-
-            const float CHARGE_OFFSET_SCD41 = 0.0f;  // TODO: measure
+            const float CHARGE_OFFSET_SCD41 = 0.0f;  // measured: no constant works, see above
 
             id(temp_raw_scd41) = x;
             id(temp_correction_extra) = id(is_charging) ? CHARGE_OFFSET_SCD41 : 0.0f;
@@ -258,11 +271,18 @@ sensor:
     temperature:
       name: "Temperature (BMP180)"
       id: temp_bmp180
-      # Same static rest-offset + flat charging-offset approach as SCD41
-      # above. Rest-offset carried over from v1 (1.74C) and cross-checked
-      # against the same 1h v2 capture - it agrees with the SCD41 to within
-      # 0.44C, so it's holding up on the new enclosure too. Charging offset
-      # still TODO: measure.
+      # Same static rest-offset approach as SCD41 above, and the same
+      # answer on charging: measured at +3.8C peak on this sensor too, and
+      # left uncorrected for the reasons spelled out up there.
+      #
+      # Rest-offset carried over from v1 (1.74C). Cross-checked twice: it
+      # agrees with the SCD41 to within 0.44C over a 1h capture, and a
+      # reference thermometer (data/2026-08-22-charging-from-empty/) put
+      # both sensors roughly 0.5-1.0C high once things settled. That is
+      # within the reference's own accuracy, and it was taken with the
+      # charger still plugged in, so it is not yet grounds to change the
+      # number - see that capture's notes for the short measurement that
+      # would settle it.
       filters:
         # The BMP180 occasionally returns one completely wrong sample: in
         # the 1h capture (data/2026-08-22-doma-baseline/, 2026-08-22, 01:56:54Z) it read

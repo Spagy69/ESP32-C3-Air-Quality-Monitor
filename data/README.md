@@ -4,9 +4,14 @@ Syrové exporty z **Home Assistant → History → Download data**. Tyhle zázna
 
 ## Formát
 
-Každá složka je jedno měření, pojmenované `RRRR-MM-DD-co-se-měřilo` (datum je **UTC**, stejně jako časy v CSV - lokální čas je v létě UTC+2). Jeden CSV = jedna entita, pojmenovaný podle veličiny, ne podle entity v HA.
+Každá složka je jedno měření, pojmenované `RRRR-MM-DD-co-se-měřilo` (datum je **UTC**, stejně jako časy v CSV - lokální čas je v létě UTC+2).
 
-Sloupce jsou tak, jak je HA exportuje: `entity_id,state,last_changed`.
+Sloupce jsou tak, jak je HA exportuje: `entity_id,state,last_changed`. Export může mít dvě podoby a obě jsou v pořádku:
+
+- **Jeden CSV na veličinu** (`co2.csv`, `temperature-scd41.csv`, …) - pojmenovaný podle veličiny, ne podle entity v HA.
+- **Jeden CSV pro všechno** (`all-sensors.csv`) - když se v HA stáhne víc entit najednou; rozlišují se sloupcem `entity_id`.
+
+Cokoliv, co se odečítalo ručně (referenční teploměr, čas cvaknutí vypínače, barva LEDky na nabíječce), patří do `.md` souboru ve stejné složce - v CSV to není a jinak se to nedá obnovit.
 
 Dvě věci, které se při čtení dat vyplatí vědět, jinak z nich vyjdou špatné závěry:
 
@@ -112,6 +117,61 @@ Opraveno filtrem v [`packages/sensors.yaml`](../packages/sensors.yaml), který t
 
 Vybíjení z 3.79 V na 2.94 V trvalo 6.5 h, tj. **~0.13 V/h** v režimu DOMA (víc než −0.08 V/h z `doma-baseline` - baterka byla níž ve vybíjecí křivce, kde klesá rychleji).
 
+### `2026-08-22-charging-from-empty/` - 4 h, nabíjení z úplně vybité baterky, s referenčním teploměrem
+
+Zařízení bylo úplně vybité, v 16:15 (lokálně) zapojena nabíječka, v 16:20 nabootovalo, **nabíječka zapojená po celou dobu**. Vedle položený lihový teploměr, odečty ručně - viz [`reference-thermometer.md`](2026-08-22-charging-from-empty/reference-thermometer.md), **bez toho souboru se z dat nedá zjistit skoro nic**.
+
+Export je tentokrát **jeden soubor pro všechny entity** (`all-sensors.csv`, sloupec `entity_id` rozlišuje), včetně `binary_sensor...charging`.
+
+#### 1. Teplo z nabíjení je +3.7 °C, a žádná konstanta ho neopraví
+
+Průběh proti ustálenému stavu (SCD41; BMP180 dělá totéž s odchylkou do 0.2 °C):
+
+| lokální čas | od bootu | teplota | nad ustáleným |
+|---|---|---|---|
+| 16:25 | 0 min | 23.78 | +0.0 |
+| 16:55 | 30 min | 28.38 | +3.4 |
+| **17:05** | **40 min** | **28.61** | **+3.7 (vrchol)** |
+| 17:25 | 60 min | 28.54 | +3.6 |
+| 18:05 | 100 min | 26.66 | +1.7 |
+| 18:55 | 150 min | 25.29 | +0.3 |
+| 19:15 | 170 min | 24.99 | +0.0 |
+
+Referenční teploměr se přitom celou dobu držel na 23.8-24.2 °C, takže to není teplota v místnosti.
+
+**Proč to nejde opravit konstantou:** teplo je úměrné nabíjecímu proudu a ten závisí na tom, jak prázdná baterka byla. Nabíjení z nuly dá hodinu plného proudu, dobití z 90 % skoro nic. Jedna konstanta by musela být vedle až o ±3.7 °C podle situace, a průměr přes tenhle cyklus (~1.8 °C) by byl vedle v **obou** směrech. Křivka podle času od začátku nabíjení selže ze stejného důvodu - přesně to zkoušela v1 a v terénu přestřelila o ~4 °C, jakmile se podmínky lišily od dat, na kterých byla nafitovaná.
+
+Firmware to proto **needituje a jen to označí**: `CHARGE_OFFSET_*` zůstávají `0.0` a displej dává během nabíjení před hodnotu `~`.
+
+#### 2. Absolutní kontrola offsetů - poprvé proti nezávislé referenci
+
+Po ustálení (19:15-20:15, nabíjení dokončené) proti lihovému teploměru:
+
+| | senzor | reference | rozdíl |
+|---|---|---|---|
+| SCD41 | ~24.9 | ~24.1 | **+0.5 až +1.0 °C** |
+| BMP180 | ~24.6 | ~24.1 | **+0.3 až +0.7 °C** |
+
+Vypadá to, že oba senzory čtou zhruba **o půl stupně až stupeň víc**, než je skutečnost - tedy že oba offsety (`temperature_offset` 5.6 a `REST_OFFSET_BMP180` 1.74) jsou o tolik malé.
+
+**Ale zatím se podle toho nic nemění**, ze dvou důvodů: (a) lihový teploměr má sám přesnost tak ±0.5 °C a v poslední hodině skočil o 1.1 °C, zatímco senzory se pohnuly o 0.15 - takže část toho rozdílu je chyba odečtu; (b) nabíječka byla pořád zapojená, takže i "ustálený" stav ještě nese trochu zbytkového tepla. Co to uzavře, je v seznamu níž.
+
+#### 3. Detekce nabíjení sepnula správně, ale konec nepozná
+
+`Charging` naskočilo v 16:25, tj. **5 minut po bootu** - detekce funguje. Vyplo se v 19:25, což je ale **přesně 3 h 00 min 03 s** po sepnutí, tedy 3hodinová bezpečnostní pojistka, ne rozpoznání konce.
+
+Skutečné nabíjení skončilo kolem **18:10-18:25** (napětí přestalo růst na 4.150 V a začalo mírně klesat). Detekce to nezachytila, protože pokles po dobití je jen ~0.0009 V/min, což se nikdy nedostane přes práh -0.01 V proti klouzavému baseline. Zůstalo tedy hodinu viset zapnuté. Tady to nevadilo (teplo v tu dobu už bylo skoro pryč), ale znamená to, že se na `Charging` nedá spolehnout jako na indikátor "právě teď teče proud".
+
+#### 4. Potvrzení té zamrzlé hodnoty z minula
+
+V 16:15, tedy **před** bootem, HA pořád ukazovalo SCD41 **27.43 °C** a BMP180 23.58 - přesně ty hodnoty z brownoutu při vybití v předchozím záznamu. Přímé potvrzení, že se to bez opravy zaseklo a viselo tam hodiny.
+
+#### 5. Vlhkost a CO2
+
+Vlhkost šla 77 → 60 % zatímco teplota rostla 23.8 → 28.6. Přepočet přes Magnusův vztah dá 58 % - naměřeno 60.5 %. Ta změna vlhkosti tedy **není skutečná**, je to jen důsledek toho, že senzor počítá RH ze své vlastní nadhodnocené teploty. Zároveň je to hezké ověření, že ten Magnusův přepočet v `humidity:` filtru počítá správně.
+
+CO2 spadlo 2400 → 1540 mezi 16:35 a 17:35 a pak znovu 1750 → 1250 kolem 19:45 - otevřené dveře, normální větrání. Nic se senzorem.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -120,7 +180,7 @@ Vybíjení z 3.79 V na 2.94 V trvalo 6.5 h, tj. **~0.13 V/h** v režimu DOMA (v�
 
 ### Co ještě chybí změřit
 
-- **Absolutní kontrola teploměrem** - jediné, co pořád chybí k uzavření kalibrace. Všechna dosavadní měření porovnávají oba senzory navzájem (shodnou se na 0.49 °C), ale nikdy proti nezávislé referenci. Stačí položit teploměr vedle ustálené krabičky a zapsat obojí. Bez toho se nedá rozhodnout, jestli sedí `temperature_offset` a `REST_OFFSET_BMP180` jako absolutní hodnoty, nebo jsou oba posunuté stejným směrem.
+- **Klidový offset bez nabíječky** (~45 min, poslední chybějící kus kalibrace). Předchozí měření s teploměrem proběhlo se zapojenou nabíječkou, takže i "ustálený" stav nesl zbytkové teplo. Postup: odpojit nabíječku, nechat 45 min běžet na baterku, pak zapsat obě hodnoty z displeje/HA a hodnotu z lihového teploměru položeného vedle. Podle toho se doladí `temperature_offset` a `REST_OFFSET_BMP180`. Ideálně odečíst teploměr **třikrát po sobě** (rozptyl odečtu je na tomhle typu ±0.5 °C, viz `reference-thermometer.md`).
 - **CESTA transient test** - potvrzeno, že úvodní skok je artefakt senzoru (viz `cold-start` výš), ale ještě není ověřené, jestli ho spouští i probuzení z deep sleepu. Rozdíl je v tom, že při brownoutu i studeném startu senzor ztratil napájení, kdežto v deep sleepu 3V3 běží dál a restartuje se jen měření. Přepnout na CESTA, nechat 3-4 cykly probuzení, exportovat teplotu SCD41 a BMP180.
 - **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.
