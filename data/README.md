@@ -314,7 +314,16 @@ Otevřené zůstává, jestli článek opravdu končí na 4.12 V, nebo jestli d�
 
 #### 6. Ostatní veličiny
 
-- **Vlhkost** 81.9 → 64.0 %. Zhruba 10 bodů z toho vysvětlí ohřátí o 2.3 °C (stejná voda ve vzduchu, vyšší teplota = nižší RH), zbytek je odeznívající vlhkost z dýchacího testu.
+- **Vlhkost** 81.9 → 64.0 %, a rozpad na příčiny je zajímavější, než vypadá. Když se RH přepočte na absolutní vlhkost (přes Magnusův vztah) a pak zpátky na to, co by ukazovala při původních 24.01 °C:
+
+  | čas | T | RH | abs. vlhkost | RH při 24.01 °C |
+  |---|---|---|---|---|
+  | 00:18 | 24.01 | 81.9 | 17.77 g/m³ | 81.9 |
+  | 00:29 | 25.23 | 79.6 | **18.53 g/m³** | **85.7** |
+  | 00:49 | 26.30 | 67.7 | 16.72 g/m³ | 77.6 |
+  | 01:07 | 25.72 | 64.7 | 15.46 g/m³ | 71.6 |
+
+  Vody ve vzduchu tedy prvních deset minut **přibývalo** (17.8 → 18.5 g/m³), teprve pak ubývalo. To sedí na varování z dýchacího testu: vlhkost z dechu opravdu zkondenzovala na stěnách a povrchu senzorů, a teplo z nabíjení ji odpařilo zpátky do vzduchu. Zbytek poklesu už je normální vysychání krabičky. Ze samotného RH by to vidět nebylo - vypadá to jako monotónní pokles.
 - **CO2** 1342 → 1247 (00:46) → 1318. Doznívání dýchacího testu a pak normální nárůst v zavřené místnosti.
 - **Tlak** 966.2-966.6 hPa přes celou hodinu, žádný výstřel - median-of-3 dělá svoje.
 
