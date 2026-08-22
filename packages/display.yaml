@@ -2,7 +2,10 @@ font:
   - file: "gfonts://Roboto"
     id: font_big
     size: 16
-    glyphs: "0123456789.-%"
+    # "~" is the warm-up marker on the temperature pages. It has to be in
+    # this glyph list or it simply won't render - a glyph-restricted font
+    # silently drops anything not listed.
+    glyphs: "0123456789.-%~"
   - file: "gfonts://Roboto"
     id: font_label
     size: 10
@@ -146,8 +149,25 @@ display:
       int page = (millis() / 3000) % page_count;
 
       const char *label;
-      char value_buf[8];
+      char value_buf[10];
       const char *unit;
+
+      // Warm-up marker for the temperature pages. After a cold power-on
+      // the reading itself settles in a minute or two, but the enclosure
+      // needs far longer to reach thermal equilibrium - and the whole
+      // temperature offset is only valid AT equilibrium, so until then the
+      // number is systematically off no matter how steady it looks. A "~"
+      // in front says "not trustworthy yet" without hiding the value.
+      //
+      // Only after a cold boot: the SCD41 keeps running through deep sleep
+      // (3V3 is never cut), so a wake needs no warm-up at all - see the
+      // cold_boot on_boot step in air-quality-monitor.yaml.
+      //
+      // TODO: 30min is the working estimate. Pin it down from a cold-start
+      // capture (switch off, let it cool, switch on, log ~60min) and set
+      // this to where the curve actually flattens.
+      const uint32_t WARMUP_MS = 30UL * 60UL * 1000UL;
+      const char *warm = (id(cold_boot) && millis() < WARMUP_MS) ? "~" : "";
 
       switch (page) {
         case 0:
@@ -159,7 +179,7 @@ display:
         case 1:
           label = "TEPLOTA";
           unit = "C";
-          snprintf(value_buf, sizeof(value_buf), "%.1f",
+          snprintf(value_buf, sizeof(value_buf), "%s%.1f", warm,
               id(temp_scd41).has_state() ? id(temp_scd41).state : id(cached_temp_scd41));
           break;
         case 2:
@@ -177,7 +197,7 @@ display:
         default:
           label = "TEPLOTA 2";
           unit = "C";
-          snprintf(value_buf, sizeof(value_buf), "%.1f",
+          snprintf(value_buf, sizeof(value_buf), "%s%.1f", warm,
               id(temp_bmp180).has_state() ? id(temp_bmp180).state : id(cached_temp_bmp180));
           break;
       }

@@ -4,6 +4,16 @@
 # ---------------------------------------------------------------------------
 globals:
   # --- display/button basic state ---
+  # True only when this boot is a real cold power-on (battery switch), not
+  # a deep-sleep wake - set once in on_boot from the ESP's own wakeup
+  # cause, see air-quality-monitor.yaml. Drives the "~" warm-up marker on
+  # the temperature pages (packages/display.yaml): the SCD41 stays powered
+  # through deep sleep (3V3 rail is never cut), so it's thermally settled
+  # on every wake and only a cold start has a warm-up phase at all.
+  - id: cold_boot
+    type: bool
+    restore_value: false
+    initial_value: 'false'
   - id: stay_on
     type: bool
     restore_value: false
@@ -175,10 +185,21 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
-  # Flips true after the first CO2 reading of this boot - see the co2
-  # on_value handler (packages/sensors.yaml) for why the very first
-  # reading is skipped rather than evaluated for the alarm.
-  - id: co2_reading_settled
+  # The alarm doesn't evaluate anything until the readings have actually
+  # settled after a boot - see the co2 on_value handler
+  # (packages/sensors.yaml) for the arming rule. Resets every boot
+  # (restore_value: false), so this re-applies on each wake by itself.
+  - id: co2_alarm_armed
     type: bool
     restore_value: false
     initial_value: 'false'
+  # Previous 2 CO2 readings, used only to measure how much the readings
+  # are still jumping around while deciding whether to arm.
+  - id: co2_hist1
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: co2_hist2
+    type: float
+    restore_value: false
+    initial_value: '0'

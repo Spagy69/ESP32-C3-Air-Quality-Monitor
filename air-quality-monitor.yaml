@@ -8,6 +8,16 @@ esphome:
   on_boot:
     - priority: 600
       then:
+        # Was this a real cold power-on (battery switch), or just a
+        # deep-sleep wake? The 3V3 rail is never cut during deep sleep, so
+        # the SCD41 keeps running and stays thermally settled - only a cold
+        # start has a warm-up phase where the temperature can't be trusted
+        # yet. ESP_SLEEP_WAKEUP_UNDEFINED is what a normal reset/power-on
+        # reports; a timer or button wake reports its own cause.
+        # esp_sleep.h comes in via the deep_sleep component's header, which
+        # this config already uses.
+        - lambda: |-
+            id(cold_boot) = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
         - delay: 1500ms
     - priority: -100
       then:

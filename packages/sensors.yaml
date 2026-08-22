@@ -17,10 +17,17 @@ sensor:
     # a single real CO2 reading ever arrived. That's not just bad for the
     # CO2 alarm below - HA never saw a fresh reading in CESTA mode either
     # way, every published value would've stayed the boot-time cached one.
-    # 10s means real readings land at ~10/20/30s into the wake window -
-    # SCD41 samples internally every 5s regardless of poll rate anyway, so
-    # this doesn't add real sensor power draw, just reads it more often.
-    update_interval: 10s
+    #
+    # 5s == the SCD41's own internal sampling rate in periodic measurement
+    # mode, so this is as fast as the sensor has anything new to say and
+    # costs no extra sensor power - we just stop throwing readings away.
+    # A CESTA wake window (30s) fits ~5 readings this way, which is what
+    # the alarm's arming rule below needs to judge whether the readings
+    # have settled and still have room left to actually fire. When a poll
+    # happens to land before the sensor flags data-ready, ESPHome simply
+    # skips that one, so the worst case degrades to the old ~10s cadence -
+    # never worse than before.
+    update_interval: 5s
     # Compiled default - stays ON unless overridden. Actually toggling ASC
     # at runtime (menu ASC KALIBRACE item) needs raw I2C, since ESPHome's
     # scd4x component only exposes this as a compile-time key - see the
@@ -28,14 +35,15 @@ sensor:
     automatic_self_calibration: true
     altitude_compensation: 435m
     # Static rest-offset (self-heating with the device idle, not charging).
-    # v1's value (5.6C) was measured on the OLD enclosure, where the sensor
-    # sat close to the ESP32/battery. v2 physically separates the sensor
-    # from the heat source, so this needs to be re-measured on the new
-    # enclosure before it's trustworthy - see README "Kalibrace" section for
-    # the measurement procedure.
-    # TODO(v2 calibration): replace with a freshly measured value. Sent to
-    # the SCD41 once at startup via I2C (register write), not re-applied
-    # during normal operation.
+    # Value carried over from v1 (measured on the OLD enclosure) - but a 1h
+    # DOMA capture on the v2 enclosure (data/doma rezim/, 2026-08-22) says
+    # it still holds: the corrected reading sat at a flat 25.09-25.27C for
+    # the whole hour and landed within 0.44C of the independently-offset
+    # BMP180, and the readings matched what the room actually felt like.
+    # Still worth one reference-thermometer check to nail it down, but this
+    # is no longer an unvalidated v1 leftover.
+    # Sent to the SCD41 once at startup via I2C (register write), not
+    # re-applied during normal operation.
     temperature_offset: 5.6°C
     co2:
       name: "CO2"
@@ -58,17 +66,47 @@ sensor:
             const float CO2_ALARM_TRIGGER_PPM = 3000.0f;  // TODO: confirm threshold
             const float CO2_ALARM_CLEAR_PPM   = 2700.0f;
 
-            // The very first reading after a boot (cold boot, deep-sleep
-            // wake, or right after the ASC on_boot I2C sequence restarts
-            // periodic measurement) can be an unsettled sensor warm-up
-            // transient - skip evaluating the alarm on it, arm starting
-            // from the next one. co2_reading_settled resets to false every
-            // boot (restore_value: false), so this naturally re-applies
-            // each wake without any extra bookkeeping.
-            if (!id(co2_reading_settled)) {
-              id(co2_reading_settled) = true;
-              return;
+            // --- Arming: don't judge anything until the readings settle ---
+            // Right after a boot the readings can be all over the place
+            // (Sensirion: discard the first reading after a power cycle,
+            // >3min of operation for full accuracy) - firing the alarm on
+            // one of those would be a false alarm at the exact moment you
+            // just switched the device on. So instead of trusting a fixed
+            // delay, watch the readings themselves: arm once 3 in a row sit
+            // within CO2_STABLE_SPREAD_PPM of each other.
+            //
+            // 150ppm is comfortably above how much real air can change
+            // between two 5s readings (tens of ppm even while CO2 climbs
+            // fast in a closed car) and far below the swings an unsettled
+            // sensor produces.
+            //
+            // The fallback matters as much as the rule: if the readings
+            // never calm down, the alarm still arms after 3 minutes rather
+            // than staying silent forever - a noisy sensor must not mean
+            // no safety net.
+            //
+            // Once armed it stays armed for the rest of this boot. A real
+            // fast CO2 rise would blow past the spread threshold, and
+            // disarming right then would kill the alarm exactly when it's
+            // needed.
+            const float    CO2_STABLE_SPREAD_PPM = 150.0f;
+            const uint32_t CO2_ARM_FALLBACK_MS   = 3UL * 60UL * 1000UL;
+
+            if (!id(co2_alarm_armed)) {
+              if (id(co2_hist1) > 0.0f && id(co2_hist2) > 0.0f) {
+                float hi = x, lo = x;
+                if (id(co2_hist1) > hi) hi = id(co2_hist1);
+                if (id(co2_hist1) < lo) lo = id(co2_hist1);
+                if (id(co2_hist2) > hi) hi = id(co2_hist2);
+                if (id(co2_hist2) < lo) lo = id(co2_hist2);
+                if ((hi - lo) < CO2_STABLE_SPREAD_PPM) id(co2_alarm_armed) = true;
+              }
+              if (millis() > CO2_ARM_FALLBACK_MS) id(co2_alarm_armed) = true;
             }
+            id(co2_hist2) = id(co2_hist1);
+            id(co2_hist1) = x;
+
+            if (!id(co2_alarm_armed)) return;
 
             if (!id(co2_alarm_enabled)) {
               id(co2_alarm_active) = false;
@@ -114,6 +152,14 @@ sensor:
             float corrected = x - id(temp_correction_extra);
             id(cached_temp_scd41) = corrected;
             return corrected;
+        # Publish only meaningful changes. At the 5s poll rate above this
+        # would otherwise write ~12 rows/min into HA's recorder for a value
+        # that drifts by well under 0.2C an hour (measured, see the
+        # temperature_offset comment). Deliberately AFTER the lambda, so
+        # the cached value still updates on every single reading - the
+        # display's fallback must not go stale just because HA doesn't
+        # need the row.
+        - delta: 0.05
     humidity:
       name: "Humidity"
       id: humidity_scd41
@@ -144,6 +190,9 @@ sensor:
             if (rh < 0.0f) rh = 0.0f;
             id(cached_humidity) = rh;
             return rh;
+        # Same reasoning as the SCD41 temperature delta filter above, and
+        # equally deliberately placed after the lambda.
+        - delta: 0.1
 
   - platform: bmp085
     address: 0x77
@@ -152,12 +201,33 @@ sensor:
       name: "Temperature (BMP180)"
       id: temp_bmp180
       # Same static rest-offset + flat charging-offset approach as SCD41
-      # above. Rest-offset carried over from v1 (1.74C) - TODO(v2
-      # calibration): re-measure on the new enclosure, same procedure as
-      # SCD41 (README "Kalibrace"). Charging offset TODO: measure.
+      # above. Rest-offset carried over from v1 (1.74C) and cross-checked
+      # against the same 1h v2 capture - it agrees with the SCD41 to within
+      # 0.44C, so it's holding up on the new enclosure too. Charging offset
+      # still TODO: measure.
       filters:
+        # The BMP180 occasionally returns one completely wrong sample: in
+        # the 1h capture (data/doma rezim/, 2026-08-22, 01:56:54Z) it read
+        # 24.41C between neighbours of ~24.70C - and the SAME read also put
+        # pressure at 956.41hPa against ~957.05hPa neighbours, so it's one
+        # bad I2C conversion, not sensor noise on one channel. With no
+        # filter at all that single value went straight to HA, to the OLED
+        # and into the cache. Median-of-3 drops it outright.
+        #
+        # Placed BEFORE the lambda on purpose, so the cached value is the
+        # cleaned one - filtering only what gets published while the rest
+        # of the code reads something else is exactly the split-brain bug
+        # that broke charging detection once already (see battery_voltage).
+        #
+        # send_every: 1 is required - the default is 5, which would publish
+        # only every fifth reading. Cost is up to ~2min of lag at the 60s
+        # poll rate, which is nothing for room temperature/pressure.
+        - median:
+            window_size: 3
+            send_every: 1
+            send_first_at: 1
         - lambda: |-
-            const float REST_OFFSET_BMP180   = 1.74f;  // TODO: re-measure on v2 enclosure
+            const float REST_OFFSET_BMP180   = 1.74f;  // cross-checked on v2, see above
             const float CHARGE_OFFSET_BMP180 = 0.0f;   // TODO: measure
 
             float extra = REST_OFFSET_BMP180;
@@ -170,6 +240,13 @@ sensor:
       name: "Pressure"
       id: pressure_bmp180
       filters:
+        # Same one-bad-I2C-read glitch as the temperature above (both
+        # channels came out of the same bad conversion), same fix, same
+        # before-the-lambda placement so the cache stays clean too.
+        - median:
+            window_size: 3
+            send_every: 1
+            send_first_at: 1
         - lambda: |-
             id(cached_pressure) = x;
             return x;
