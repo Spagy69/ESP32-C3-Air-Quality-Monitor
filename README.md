@@ -128,6 +128,52 @@ Firmware to řeší dvěma způsoby:
 
 > Těch 45 min je změřené, ne odhadnuté. Předchozí hodnota 20 min pocházela z extrapolace záznamu, který se ukázal být teplý restart - fitovat exponenciálu na krátký, skoro ustálený ocas dalo časovou konstantu necelou polovinu skutečné, a odhad tím pádem přestřelil o víc než dvojnásobek.
 
+## Přesnost
+
+Kolik se tomu dá věřit. Rozlišuj dvě různé věci - **krátkodobou stabilitu** (o kolik se hodnota změnila) a **absolutní přesnost** (jestli je to opravdu tolik). Ta první je o řád lepší.
+
+| Veličina | Krátkodobě (změřeno) | Absolutně | Co to omezuje |
+|---|---|---|---|
+| **Teplota** | ±0.05 °C | **±0.5 °C** | referenční teploměr, ne senzor |
+| **Vlhkost** | ±0.15 % | **neověřeno** | není čím změřit |
+| **CO₂** | ±2 ppm | ±(40 ppm + 5 %), tj. ~±190 ppm při 3000 | katalogový údaj, neověřeno |
+| **Tlak** | ±0.07 hPa | **neověřeno** | není čím změřit |
+| **Napětí baterky** | ±0.02 V | ověřeno v **jediném bodě** (4.15 V) | dělič proměřený jen nahoře |
+| **Procenta baterky** | - | **jen orientační** | lineární převod, LiPo se tak nechová |
+
+### Tři věci, které je fér říct nahlas
+
+**1. Zařízení nemůže být přesnější než reference, kterou se kalibrovalo.** Offsety jsou nastavené proti lihovému teploměru, jehož vlastní přesnost je tak ±0.5 °C. Ty tři odečty vyšly shodně (23.9), takže *opakovatelnost* odečtu byla dobrá - ale jestli ten teploměr sám neukazuje o půl stupně vedle, se z ničeho nedozvíme. Těch ±0.5 °C je strop daný referencí, ne senzory.
+
+**2. Shoda obou senzorů už není nezávislý důkaz.** Dřív se dalo argumentovat, že SCD41 a BMP180 se shodnou na 0.35 °C, i když mají úplně jiné offsety. Jenže **teď jsou oba kalibrované proti tomu samému teploměru**, takže když je ten vedle o 0.7 °C, jsou vedle oba stejně. Ta shoda je konzistence, ne správnost.
+
+**3. Vlhkost je nejslabší číslo v celém zařízení.** Nikdy se neověřovala - vlhkoměr jako reference není. A veze se na teplotě: SCD41 počítá RH ze své vlastní teploty, takže **chyba 1 °C v teplotě znamená asi 4 procentní body v vlhkosti** (ověřeno na reálných datech přes Magnusův vztah). Poslední překalibrování teploty ji posunulo asi o 4 body nahoru a nemáme jak potvrdit, že správně.
+
+### Kdy je to horší, než říká tabulka
+
+Tyhle stavy firmware **označuje vlnovkou** `~`, takže se nedají splést s normálním provozem:
+
+| Situace | Chyba teploty |
+|---|---|
+| Při nabíjení | až **+3.7 °C** (neopravuje se, viz Known Issues) |
+| Prvních 10 min po studeném startu | **−1.1 °C** |
+| Prvních 30 min | −0.34 °C |
+| Prvních 45 min | −0.06 °C |
+| V režimu s uspáváním | **nezměřeno**, pravděpodobně čte níž |
+
+Ta poslední řádka je jediná otevřená - offsety jsou změřené pro nepřetržitý provoz, kde se krabička zahřívá pořád. Když většinu času spí, zahřívá se míň a stejný offset odečítá víc, než by měl.
+
+### Co by přesnost zvedlo
+
+- **Lepší teplotní reference** (kalibrovaný teploměr, nebo směs ledu a vody jako pevný bod) - zvedlo by strop z ±0.5 °C
+- **Druhý CO₂ metr** vedle - jediný způsob, jak ověřit CO₂ a hlídat drift ASC
+- **Multimetr ve 2-3 dalších bodech napětí** (~3.5 a ~3.8 V) - dodělalo by dělič
+- **Vybíjecí křivka místo lineárního převodu** - opravilo by procenta baterky
+
+### Pro co to stačí tak jak to je
+
+Pro obě zamýšlená použití ano. Sledování pokoje v HA potřebuje hlavně spolehlivé **změny**, a ty sedí na ±0.05 °C. A pro CO₂ alarm v autě je ±190 ppm při prahu 3000 ppm úplně jedno - rozdíl mezi „vzduch je v pohodě" a „dusíš se" jsou tisíce ppm, ne stovky.
+
 ## Naměřená data
 
 Skoro každé konkrétní číslo v tomhle README (i většina konstant ve firmwaru) pochází z reálného měření, ne z odhadu. Syrové exporty z Home Assistant History jsou ve složce [`data/`](data/README.md) i s popisem, za jakých podmínek každý záznam vznikl a co z něj vyšlo - včetně toho, co ještě chybí změřit.
