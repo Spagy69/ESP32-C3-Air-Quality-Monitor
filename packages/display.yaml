@@ -191,40 +191,78 @@ display:
       // that fixes this - see the CHARGE_OFFSET comment in
       // packages/sensors.yaml for why a constant can't work - so the
       // honest thing is to say the number isn't trustworthy right now.
-      bool warming  = id(cold_boot) && millis() < WARMUP_MS;
-      const char *warm = (warming || id(is_charging)) ? "~" : "";
+      bool suspect = (id(cold_boot) && millis() < WARMUP_MS) || id(is_charging);
+
+      // "~" means one thing throughout: this number is not a fresh,
+      // trustworthy reading right now. Three ways that happens - warming
+      // up, charging, or having to fall back to the last cached value
+      // because no live reading is available. One symbol, one meaning.
+      auto mark = [&](bool stale) { return (suspect || stale) ? "~" : ""; };
 
       switch (page) {
-        case 0:
+        case 0: {
           label = "CO2";
           unit = "ppm";
-          snprintf(value_buf, sizeof(value_buf), "%.0f",
-              id(co2_sensor).has_state() ? id(co2_sensor).state : id(cached_co2));
+          bool stale = !id(co2_sensor).has_state();
+          snprintf(value_buf, sizeof(value_buf), "%s%.0f", mark(stale),
+              stale ? id(cached_co2) : id(co2_sensor).state);
           break;
-        case 1:
+        }
+        case 1: {
           label = "TEPLOTA";
           unit = "C";
-          snprintf(value_buf, sizeof(value_buf), "%s%.1f", warm,
-              id(temp_scd41).has_state() ? id(temp_scd41).state : id(cached_temp_scd41));
+          // Prefer the SCD41, fall back to the BMP180, and only then to
+          // the cache.
+          //
+          // The BMP180 step is what makes deep sleep usable at all. The
+          // SCD41 needs ~2min after every measurement restart before its
+          // temperature means anything (proven over nine wake cycles in
+          // data/2026-08-22-cesta-wake-cycles/: it starts ~5.5C above the
+          // BMP180 every single time), and a timer wake is only awake for
+          // 30s - so in CESTA its readings are always dropped upstream in
+          // packages/sensors.yaml and this sensor simply never has state.
+          // The BMP180 has no such transient at all, and at rest the two
+          // agree to within 0.3-0.5C.
+          //
+          // Deliberately keyed on "does a live reading exist" rather than
+          // on the deep-sleep setting: no mode-dependent branching to keep
+          // in sync, and it does the right thing in every case, including
+          // the first 3min of a normal boot.
+          float t; bool stale = false;
+          if (id(temp_scd41).has_state())        t = id(temp_scd41).state;
+          else if (id(temp_bmp180).has_state())  t = id(temp_bmp180).state;
+          else { t = id(cached_temp_scd41); stale = true; }
+          snprintf(value_buf, sizeof(value_buf), "%s%.1f", mark(stale), t);
           break;
-        case 2:
+        }
+        case 2: {
           label = "VLHKOST";
           unit = "%";
-          snprintf(value_buf, sizeof(value_buf), "%s%.0f", warm,
-              id(humidity_scd41).has_state() ? id(humidity_scd41).state : id(cached_humidity));
+          // No second source for humidity - the BMP180 doesn't measure it.
+          // So in deep-sleep modes this falls back to the cache and gets
+          // marked, which is the honest answer: the device cannot get a
+          // valid humidity reading in a 30s wake window.
+          bool stale = !id(humidity_scd41).has_state();
+          snprintf(value_buf, sizeof(value_buf), "%s%.0f", mark(stale),
+              stale ? id(cached_humidity) : id(humidity_scd41).state);
           break;
-        case 3:
+        }
+        case 3: {
           label = "TLAK";
           unit = "hPa";
-          snprintf(value_buf, sizeof(value_buf), "%.0f",
-              id(pressure_bmp180).has_state() ? id(pressure_bmp180).state : id(cached_pressure));
+          bool stale = !id(pressure_bmp180).has_state();
+          snprintf(value_buf, sizeof(value_buf), "%s%.0f", mark(stale),
+              stale ? id(cached_pressure) : id(pressure_bmp180).state);
           break;
-        default:
+        }
+        default: {
           label = "TEPLOTA 2";
           unit = "C";
-          snprintf(value_buf, sizeof(value_buf), "%s%.1f", warm,
-              id(temp_bmp180).has_state() ? id(temp_bmp180).state : id(cached_temp_bmp180));
+          bool stale = !id(temp_bmp180).has_state();
+          snprintf(value_buf, sizeof(value_buf), "%s%.1f", mark(stale),
+              stale ? id(cached_temp_bmp180) : id(temp_bmp180).state);
           break;
+        }
       }
 
       // 1. Left: quantity name (top)
