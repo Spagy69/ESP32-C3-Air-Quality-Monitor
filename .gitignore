@@ -4,5 +4,3 @@
 /.esphome/
 /secrets.yaml
 
-# AI-assistant session context/history - local only, not for the public repo
-/HANDOFF.md

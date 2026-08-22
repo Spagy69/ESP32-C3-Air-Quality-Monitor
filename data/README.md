@@ -219,6 +219,33 @@ Proti předchozímu pokusu (`charging-from-empty`, kde vyšlo +0.5 až +1.0 a +0
 
 Vedlejší efekt: změna `temperature_offset` posune i vlhkost, protože SCD41 počítá RH ze své offsetem opravené teploty - vyjde asi o 4 procentní body výš. Ověřit to nemáme čím, vlhkoměr jako reference chybí. CO2 to neovlivní.
 
+### `2026-08-22-breath-test/` - 45 min, dýchání do senzoru
+
+První záznam na **novém firmwaru** (nové offsety 6.7 / 2.46). Zařízení v klidu, pak od 23:39 pomalé dýchání do krabičky.
+
+#### Potvrzení, že nové offsety sedí
+
+Před dýcháním je rozdíl **SCD41 − BMP180 = −0.06 až −0.11 °C**. Před překalibrováním to bylo +0.35 °C. Posun je přesně ten očekávaný: SCD41 dostal o 1.07 větší offset, BMP180 o 0.72, rozdíl 0.35 - takže +0.35 → ~0.00. Oba senzory se teď za klidu shodnou na **desetinu stupně**. Po odeznění dýchání (00:06) je rozdíl zpátky na −0.05 °C.
+
+#### Reakce na dech
+
+| | SCD41 | BMP180 |
+|---|---|---|
+| interval čtení | 5 s | 60 s |
+| vrchol | 26.29 °C v 23:40:21 | 28.00 °C v 23:40:56 |
+| náběh | 24.03 → 26.29 za 45 s | jen 3 vzorky přes celou událost |
+
+**Rozdíl až −2.57 °C je přechodový jev, ne neshoda senzorů.** BMP180 je holý čip s minimální tepelnou kapacitou a reaguje okamžitě; SCD41 je větší modul a jeho teplotní výstup je navíc interně filtrovaný (ten samý filtr, který dělá ~2min startovní transient). Při pomalé změně dají oba totéž, při prudké ukáže víc ten rychlejší a bližší zdroji tepla.
+
+Zajímavost: publikovaných 28.00 °C u BMP180 je **už zfiltrovaná** hodnota. Median-of-3 vydá prostřední ze tří čtení, takže aby prošlo 28.00, muselo být jedno z předchozích syrových čtení **ještě vyšší** - skutečný vrchol byl nejspíš přes 30 °C. Filtr fungoval, jak má.
+
+#### Ostatní veličiny
+
+- **CO2**: 1253 → **5038 ppm** ve vrcholu, nad 3000 ppm celkem **6.6 min**. Návrat k ~1400 za 25 min.
+- **Vlhkost**: 65.7 → **93.8 %**, vrchol ale až v 23:52, tedy **12 min po** vrcholu CO2. Část toho zpoždění je chladnutí (klesající teplota zvedá RH při stejném množství vody), část vlhkost, která v krabičce zůstala - CO2 se provětrá rychleji.
+
+> 93.8 % je blízko rosnému bodu. Dech je nasycený při ~34 °C a když v krabičce zchladne na 24 °C, je hluboko za saturací. Jednorázově nevadí, opakovaně tam dýchat ale znamená riziko skutečné kondenzace na senzorech.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.

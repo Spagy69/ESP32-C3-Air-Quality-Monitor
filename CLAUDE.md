@@ -9,10 +9,12 @@ takový trailer někde objevil, patří pryč.
 
 **Nepushuj.** Commituj jen lokálně. `git push` až na výslovné vyžádání.
 
-## Soubory mimo repo
+## HANDOFF.md
 
-`HANDOFF.md` je lokální kontext pro asistenta, **nikdy nepatří do gitu**
-(je v `.gitignore`).
+`HANDOFF.md` je průběžný kontext a historie rozhodnutí pro asistenta.
+Od srpna 2026 **je součástí repa** (dřív byl v `.gitignore`). Udržuj ho
+aktuální stejně jako ostatní dokumentaci - hlavně sekci v2 STATUS a seznam
+otevřených položek.
 
 ## Data
 
