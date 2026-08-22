@@ -143,6 +143,42 @@ sensor:
       name: "Temperature (SCD41)"
       id: temp_scd41
       filters:
+        # Throw away the SCD41's start-up transient. For roughly the first
+        # 2 minutes after ESPHome restarts periodic measurement, this sensor
+        # reports several degrees too high and then decays back - and it is
+        # NOT the enclosure warming up.
+        #
+        # Proven twice in real captures, both in data/2026-08-22-cold-start/:
+        #  - From a genuinely cold start the SCD41 read 2.13C ABOVE the
+        #    BMP180 at t=6s, crossed below it by t=2min, then converged to
+        #    its normal +0.49C offset. A cold chip cannot read high.
+        #  - When the dying battery brownout-rebooted the device at
+        #    10:45:15Z, the SCD41 jumped 24.04 -> 28.42C (+4.37C) in under
+        #    38 seconds while the BMP180 sat at 23.60/23.59/23.58. A 4.4C
+        #    real change with the other sensor flat is impossible.
+        #
+        # Returning {} drops the reading entirely - not published to HA, and
+        # deliberately not cached either, so the display keeps falling back
+        # to the last known good value instead of a wrong one. That is what
+        # went wrong before this filter existed: the device brownout-rebooted
+        # as the battery died, published a transient 27.43C, and HA then sat
+        # on that as the last known temperature (reality: 23.58C) - a value
+        # that was never actually measured.
+        #
+        # Deliberately NOT applied to co2 below: its transient is only ~56ppm
+        # against a 3000ppm alarm threshold, and dropping CO2 readings would
+        # starve the alarm's arming rule in CESTA, where the device is awake
+        # for just 30s.
+        #
+        # Consequence worth knowing: in CESTA nothing gets through this
+        # filter at all (30s awake < 3min), so temperature/humidity there
+        # stay at the last cached value. That is not a regression - CESTA
+        # temperature was already wrong, just invisibly so. See README
+        # Known Issues.
+        - lambda: |-
+            const uint32_t SCD41_SETTLE_MS = 3UL * 60UL * 1000UL;
+            if (millis() < SCD41_SETTLE_MS) return {};
+            return x;
         # Flat charging-time offset instead of the old v1 time-decay curve
         # model. The curve model (fit on a single charge cycle) overshot by
         # ~4C in the field when charge conditions differed from the
@@ -184,6 +220,16 @@ sensor:
       # itself isn't affected by self-heating independent of temperature -
       # only the sensor's internal RH computation is.
       filters:
+        # Same start-up transient drop as the temperature above, and for the
+        # same reason: RH is computed by the sensor from that same biased
+        # temperature signal, so it goes wrong with it. Measured in
+        # data/2026-08-22-cold-start/: at the 10:50:55Z brownout reboot the
+        # published humidity jumped 64.96% -> 53.70% in one reading, and
+        # that 53.70% is what HA was left holding when the battery died.
+        - lambda: |-
+            const uint32_t SCD41_SETTLE_MS = 3UL * 60UL * 1000UL;
+            if (millis() < SCD41_SETTLE_MS) return {};
+            return x;
         - lambda: |-
             if (id(temp_correction_extra) <= 0.001f) {
               id(cached_humidity) = x;

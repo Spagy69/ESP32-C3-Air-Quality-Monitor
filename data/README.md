@@ -66,6 +66,52 @@ Z τ se dá extrapolovat na opravdu studený start (τ je vlastnost soustavy, na
 
 Vedlejší produkt: potvrzuje, jak ESPHome plánuje první čtení. BMP180 s 60s intervalem publikoval už ~3 s po bootu, SCD41 s 10s až v 11 s (jeho první poll padl dřív, než měl senzor `data_ready`, a přeskočil se).
 
+### `2026-08-22-cold-start/` - 6.5 h, opravdový studený start až do vybití baterky
+
+Zařízení bylo vypnuté ~1 h, pak zapnuté (boot 04:19:33Z) a necháno běžet na baterku, dokud nedošla. Režim DOMA, displej vypnutý. **Nejcennější záznam v téhle složce** - odpověděl na tři otázky najednou.
+
+#### 1. Zahřívání trvá ~45 min, ne 20
+
+BMP180 se ustálí kolem 24.15 °C (plató od 60. minuty). Zbývající chyba v čase:
+
+| čas | 10 min | 20 min | 30 min | 40 min | 50 min |
+|---|---|---|---|---|---|
+| chyba | −1.11 °C | −0.58 °C | −0.34 °C | −0.18 °C | −0.06 °C |
+
+Časová konstanta vyšla **13-15 min**, ustálení tedy trvá ~3τ. Odtud `WARMUP_MS = 45 min`.
+
+> Předchozí hodnota 20 min byla extrapolace z `power-on-warmup`, který se ukázal být teplý restart. Fitovat exponenciálu na krátký, skoro ustálený ocas dalo τ = 5.9 min, tedy **necelou polovinu skutečné hodnoty**, a extrapolace tím pádem přestřelila o víc než 2×. Poučení: časová konstanta fitovaná přes krátké okno se nedá extrapolovat.
+
+#### 2. Ten úvodní skok SCD41 je prokazatelně artefakt senzoru
+
+Dva nezávislé důkazy z tohohle jednoho záznamu:
+
+- **Ze studeného startu.** V t=6 s hlásí SCD41 o **2.13 °C víc než BMP180**, ve 2. minutě je naopak **pod ním**, a pak se oba srovnají na normální rozdíl +0.49 °C. Studený čip nemůže hlásit vysoko - kdyby šlo o teplo, musel by startovat nízko a růst.
+- **Při brownout restartu.** Jak baterka umírala, zařízení se v 10:45:15Z samo restartovalo a SCD41 skočil z 24.04 na **28.42 °C (+4.37 °C) za necelých 38 s**, zatímco BMP180 stál na 23.60 / 23.59 / 23.58. Reálná změna o 4.4 °C při zcela klidném druhém senzoru je fyzikálně nemožná.
+
+Systematická kontrola celého 6.5h záznamu: skoky SCD41 nad 1 °C jsou **přesně dva** a oba sedí na restart (10:45:15 a 10:50:55). Jinde nic. Rozdíl SCD41−BMP180 drží +0.46 až +0.53 °C celých šest hodin.
+
+#### 3. Proč HA po vybití ukazovalo hodnoty, které nikdy nenaměřilo
+
+Konec záznamu krok po kroku:
+
+| čas | napětí | SCD41 | BMP180 | RH | co se stalo |
+|---|---|---|---|---|---|
+| 10:50:08 | 3.00 V | 24.008 | 23.588 | 64.96 | poslední **správné** čtení |
+| 10:50:55 | 2.94 V | **27.434** | 23.575 | **53.70** | brownout restart → transient |
+| 10:51:35 | - | - | - | - | `unavailable`, spojení pryč |
+| 10:52:45 | 2.94 V | **27.434** | 23.575 | **53.70** | reconnect, **bit-identické** hodnoty |
+
+Ten poslední řádek není nové měření - je to ta samá hodnota znovu. ESPHome si stavy senzorů drží v RAM a při obnovení spojení je pošle znovu; HA to zaloguje jako změnu, protože entita předtím byla `unavailable`. Poznat se to dá podle toho, že jsou to **bit-identické floaty** (2.93834662437439), což u 30× oversamplovaného ADC nemůže vzniknout dvakrát náhodou.
+
+A protože pak baterka došla nadobro, HA zůstalo viset právě na těch hodnotách z brownoutu: **27.43 °C** (realita 23.58, tedy o 3.9 °C vedle) a **53.7 %** vlhkosti (předtím 64.96, o 11 % vedle). Nikdy naměřené nebyly.
+
+Opraveno filtrem v [`packages/sensors.yaml`](../packages/sensors.yaml), který teplotu a vlhkost SCD41 první 3 minuty po bootu zahazuje úplně - nepublikuje ani necachuje.
+
+#### Vedlejší čísla
+
+Vybíjení z 3.79 V na 2.94 V trvalo 6.5 h, tj. **~0.13 V/h** v režimu DOMA (víc než −0.08 V/h z `doma-baseline` - baterka byla níž ve vybíjecí křivce, kde klesá rychleji).
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -74,7 +120,7 @@ Vedlejší produkt: potvrzuje, jak ESPHome plánuje první čtení. BMP180 s 60s
 
 ### Co ještě chybí změřit
 
-- **Opravdu studený start** (`RRRR-MM-DD-cold-start/`) - záznam výš byl jen teplý restart. Nechat vypnuté **45-60 min** (τ soustavy je ~6 min, takže 5τ = 30 min stačí, zbytek je rezerva), pak zapnout a nechat běžet 45-60 min v DOMA s vypnutým displejem. Nedržet v ruce, zapsat si čas cvaknutí a položit vedle referenční teploměr. Změní `WARMUP_MS` z extrapolace na měření **a zároveň rozhodne tu otázku s úvodním skokem**: vychladlý čip fyzicky nemůže hlásit vysoko, takže když SCD41 i po hodině vypnutí naskočí ~2.5 °C nad plató, je to definitivní důkaz, že jde o chování senzoru, ne o teplotu.
-- **CESTA transient test** - jen pokud předchozí bod potvrdí, že jde o senzor: přepnout na CESTA, nechat 3-4 cykly probuzení, exportovat teplotu SCD41. Startuje-li každé probuzení kolem 27 °C, transient se opakuje při každém probuzení a v CESTA (30 s vzhůru) by padlo celé okno doprostřed něj.
+- **Absolutní kontrola teploměrem** - jediné, co pořád chybí k uzavření kalibrace. Všechna dosavadní měření porovnávají oba senzory navzájem (shodnou se na 0.49 °C), ale nikdy proti nezávislé referenci. Stačí položit teploměr vedle ustálené krabičky a zapsat obojí. Bez toho se nedá rozhodnout, jestli sedí `temperature_offset` a `REST_OFFSET_BMP180` jako absolutní hodnoty, nebo jsou oba posunuté stejným směrem.
+- **CESTA transient test** - potvrzeno, že úvodní skok je artefakt senzoru (viz `cold-start` výš), ale ještě není ověřené, jestli ho spouští i probuzení z deep sleepu. Rozdíl je v tom, že při brownoutu i studeném startu senzor ztratil napájení, kdežto v deep sleepu 3V3 běží dál a restartuje se jen měření. Přepnout na CESTA, nechat 3-4 cykly probuzení, exportovat teplotu SCD41 a BMP180.
 - **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.

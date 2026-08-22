@@ -164,21 +164,24 @@ display:
       // -14% in the first minute, and only within 0.5% of final from
       // ~11min - see data/2026-08-22-power-on-warmup/).
       //
-      // 20min comes from the measured curve, not a guess. That capture
-      // reached +-0.05C at 12-14min, but it wasn't a true cold start (the
-      // device had only been off a few minutes - BMP180 rose just 0.37C
-      // where a fully cooled enclosure has to climb its whole 1.74C rest
-      // offset). Extrapolating with the fitted time constant instead
-      // (BMP180 tau=5.9min, the slower of the two): 1.74C -> +-0.05C takes
-      // 20.9min. 20min covers both sensors from properly cold.
-      // TODO: confirm against a real cold-start capture (off for an hour,
-      // then log ~60min) - that turns this extrapolation into a
-      // measurement.
+      // 45min is measured, from a real cold start (device off ~1h, then
+      // logged for 6.5h - data/2026-08-22-cold-start/). Taking the BMP180,
+      // whose reading plateaus around 24.15C from minute 60 on, the error
+      // left at each point is: -1.11C at 10min, -0.58C at 20min, -0.34C at
+      // 30min, -0.18C at 40min, -0.06C at 50min. The fitted time constant
+      // is ~13-15min, so it takes ~3 tau to disappear.
       //
-      // Only after a cold boot. Whether a deep-sleep wake needs this too is
-      // an open question - see the SCD41 start-up transient note in README
-      // Known Issues; not assumed either way here.
-      const uint32_t WARMUP_MS = 20UL * 60UL * 1000UL;
+      // This replaced an earlier 20min, which came from extrapolating a
+      // capture that turned out to be a warm restart. Fitting an
+      // exponential to the small tail of an almost-settled curve gave
+      // tau=5.9min - less than half the real value - so the extrapolation
+      // was optimistic by more than 2x. Worth remembering before trusting
+      // a time constant fitted over a short window again.
+      //
+      // Only after a cold boot. The SCD41's own start-up transient (a
+      // different, much shorter effect that DOES repeat on every wake) is
+      // handled separately by a filter in packages/sensors.yaml.
+      const uint32_t WARMUP_MS = 45UL * 60UL * 1000UL;
       const char *warm = (id(cold_boot) && millis() < WARMUP_MS) ? "~" : "";
 
       switch (page) {
