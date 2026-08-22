@@ -1,0 +1,12 @@
+entity_id,state,last_changed
+sensor.air_quality_monitor_battery_voltage,3.7271466255188,2026-08-21T21:53:00.000Z
+sensor.air_quality_monitor_battery_voltage,3.69802665710449,2026-08-21T21:54:44.509Z
+sensor.air_quality_monitor_battery_voltage,3.70890665054321,2026-08-21T21:55:44.506Z
+sensor.air_quality_monitor_battery_voltage,3.72405362129211,2026-08-21T21:56:44.509Z
+sensor.air_quality_monitor_battery_voltage,3.58837366104126,2026-08-21T21:57:44.517Z
+sensor.air_quality_monitor_battery_voltage,3.72352004051208,2026-08-21T21:58:44.520Z
+sensor.air_quality_monitor_battery_voltage,3.72298669815063,2026-08-21T21:59:44.527Z
+sensor.air_quality_monitor_battery_voltage,3.72160005569458,2026-08-21T22:00:44.524Z
+sensor.air_quality_monitor_battery_voltage,3.7203197479248,2026-08-21T22:01:44.525Z
+sensor.air_quality_monitor_battery_voltage,4.11221313476562,2026-08-21T22:02:44.527Z
+sensor.air_quality_monitor_battery_voltage,4.11285352706909,2026-08-21T22:03:44.532Z

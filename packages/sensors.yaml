@@ -36,7 +36,7 @@ sensor:
     altitude_compensation: 435m
     # Static rest-offset (self-heating with the device idle, not charging).
     # Value carried over from v1 (measured on the OLD enclosure) - but a 1h
-    # DOMA capture on the v2 enclosure (data/doma rezim/, 2026-08-22) says
+    # DOMA capture on the v2 enclosure (data/2026-08-22-doma-baseline/) says
     # it still holds: the corrected reading sat at a flat 25.09-25.27C for
     # the whole hour and landed within 0.44C of the independently-offset
     # BMP180, and the readings matched what the room actually felt like.
@@ -207,7 +207,7 @@ sensor:
       # still TODO: measure.
       filters:
         # The BMP180 occasionally returns one completely wrong sample: in
-        # the 1h capture (data/doma rezim/, 2026-08-22, 01:56:54Z) it read
+        # the 1h capture (data/2026-08-22-doma-baseline/, 2026-08-22, 01:56:54Z) it read
         # 24.41C between neighbours of ~24.70C - and the SAME read also put
         # pressure at 956.41hPa against ~957.05hPa neighbours, so it's one
         # bad I2C conversion, not sensor noise on one channel. With no
@@ -259,7 +259,7 @@ sensor:
   # XIAO BAT+ pin/TP4056 OUT+ as in v1) - see WIRING.md. The 100k/GND leg
   # is still on the XIAO's own GND (= TP4056 OUT-), same as v1. Moving the
   # 220k leg noticeably shrank the voltage jump seen right when the
-  # charger connects (data/votaz1.csv, v1 wiring) - the v1 tap point
+  # charger connects (data/2026-08-21-v1-charger-connect/battery-voltage.csv, v1 wiring) - the v1 tap point
   # carried real extra series resistance (module traces/contacts) on top
   # of the cell's own internal resistance.
   #
@@ -270,7 +270,7 @@ sensor:
   # one reading (the 30 samples run back-to-back in a few ms). A noise
   # event that spans the whole burst - e.g. a WiFi TX-induced supply sag -
   # poisons all 30 samples together and oversampling can't touch it. That's
-  # exactly what showed up in a real capture (data/votaz1.csv): one whole
+  # exactly what showed up in a real capture (data/2026-08-21-v1-charger-connect/battery-voltage.csv): one whole
   # 60s reading landed ~0.13V low while its neighbors were flat.
   #
   # BUG FOUND IN PRACTICE (fixed): an earlier version fought that with an
