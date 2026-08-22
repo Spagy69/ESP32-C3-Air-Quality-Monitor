@@ -44,6 +44,28 @@ A jeden bug: v **01:56:54Z** pustil BMP180 jedno úplně vedlejší čtení - te
 
 > Pozor: tenhle záznam začíná **až po** tepelném ustálení, takže se z něj nedá zjistit, jak dlouho zahřívání po studeném startu trvá.
 
+### `2026-08-22-power-on-warmup/` - 26 min od zapnutí vypínačem
+
+Záznam pořízený kvůli otázce "jak dlouho po zapnutí trvá, než jsou hodnoty přesné". **Není to studený start** - zařízení bylo vypnuté jen pár minut, což se v datech i pozná: BMP180 vyrostl celkem o 0.37 °C, ale jeho klidový offset je 1.74 °C, takže vychladlý box by musel vyrůst zhruba o těch 1.74. Naměřené doby ustálení jsou proto **spodní mez**.
+
+Boot je vidět jako `unavailable` → `unknown` → první hodnota (02:46:00-02:46:11Z).
+
+Křivka má **dvě fáze**, které spolu nesouvisí:
+
+| fáze | co se děje |
+|---|---|
+| **0-1.5 min** | SCD41 hlásí **+2.5 °C nad plató** (27.5 vs 25.0), vlhkost **-14 %**, CO2 +56 ppm. Prudce klesá. |
+| **1.5-3 min** | Projde správnou hodnotou a **podstřelí o 0.5 °C** dolů. |
+| **3-15 min** | Teprve tady se zahřívá krabička - plynulý návrat nahoru, τ ≈ 3.1 min (SCD41) / 5.9 min (BMP180). |
+
+Doby ustálení (odchylka od finální hodnoty): SCD41 do ±0.1 °C od **12.0 min**, BMP180 od **9.0 min**, vlhkost do ±0.5 % od **10.9 min**, CO2 do ±15 ppm od 14.2 min.
+
+Z τ se dá extrapolovat na opravdu studený start (τ je vlastnost soustavy, na amplitudě nezávisí): BMP180 by z plných 1.74 °C potřeboval **20.9 min** na ±0.05 °C. Odtud `WARMUP_MS = 20 min` v [`packages/display.yaml`](../packages/display.yaml).
+
+**A jeden nález, který tam nikdo nehledal:** ta úvodní fáze **není tepelná**. Box byl při zapnutí prakticky na provozní teplotě, takže die SCD41 musel být *chladnější* než jeho ustálených 30.6 °C raw - a on přesto hlásil 33.1. Vychladlý die nemůže hlásit vysoko. BMP180 přitom dělá pravý opak: startuje na svém minimu a roste. Vypadá to tedy na chování samotného SCD41 po startu periodického měření, ne na teplotu okolí. Proč to může být problém pro režim CESTA, je v README v Known Issues - a **zatím to není ověřené**.
+
+Vedlejší produkt: potvrzuje, jak ESPHome plánuje první čtení. BMP180 s 60s intervalem publikoval už ~3 s po bootu, SCD41 s 10s až v 11 s (jeho první poll padl dřív, než měl senzor `data_ready`, a přeskočil se).
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -52,6 +74,7 @@ A jeden bug: v **01:56:54Z** pustil BMP180 jedno úplně vedlejší čtení - te
 
 ### Co ještě chybí změřit
 
-- **Studený start** (`RRRR-MM-DD-cold-start/`) - vypnout hlavním vypínačem, nechat vychladnout, zapnout a nechat ~60 min běžet v DOMA. Exportovat obě teploty (a klidně i vlhkost/CO2). Z toho se určí, kde se křivka srovná, a podle toho nastaví `WARMUP_MS` v [`packages/display.yaml`](../packages/display.yaml) - teď je to odhad 30 min.
+- **Opravdu studený start** (`RRRR-MM-DD-cold-start/`) - záznam výš byl jen teplý restart. Nechat vypnuté **45-60 min** (τ soustavy je ~6 min, takže 5τ = 30 min stačí, zbytek je rezerva), pak zapnout a nechat běžet 45-60 min v DOMA s vypnutým displejem. Nedržet v ruce, zapsat si čas cvaknutí a položit vedle referenční teploměr. Změní `WARMUP_MS` z extrapolace na měření **a zároveň rozhodne tu otázku s úvodním skokem**: vychladlý die fyzicky nemůže hlásit vysoko, takže když SCD41 i po hodině vypnutí naskočí ~2.5 °C nad plató, je to definitivní důkaz, že jde o chování senzoru, ne o teplotu.
+- **CESTA transient test** - jen pokud předchozí bod potvrdí, že jde o senzor: přepnout na CESTA, nechat 3-4 cykly probuzení, exportovat teplotu SCD41. Startuje-li každé probuzení kolem 27 °C, transient se opakuje při každém probuzení a v CESTA (30 s vzhůru) by padlo celé okno doprostřed něj.
 - **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.

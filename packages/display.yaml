@@ -152,21 +152,33 @@ display:
       char value_buf[10];
       const char *unit;
 
-      // Warm-up marker for the temperature pages. After a cold power-on
-      // the reading itself settles in a minute or two, but the enclosure
-      // needs far longer to reach thermal equilibrium - and the whole
-      // temperature offset is only valid AT equilibrium, so until then the
-      // number is systematically off no matter how steady it looks. A "~"
-      // in front says "not trustworthy yet" without hiding the value.
+      // Warm-up marker for the temperature/humidity pages. The enclosure
+      // needs a long time to reach thermal equilibrium after a cold
+      // power-on, and the whole temperature offset is only valid AT
+      // equilibrium - so until then the number is systematically off no
+      // matter how steady it looks. A "~" in front says "not trustworthy
+      // yet" without hiding the value.
       //
-      // Only after a cold boot: the SCD41 keeps running through deep sleep
-      // (3V3 is never cut), so a wake needs no warm-up at all - see the
-      // cold_boot on_boot step in air-quality-monitor.yaml.
+      // Humidity gets the same marker: the SCD41 derives RH from that same
+      // temperature signal, so it drifts right along with it (measured:
+      // -14% in the first minute, and only within 0.5% of final from
+      // ~11min - see data/2026-08-22-power-on-warmup/).
       //
-      // TODO: 30min is the working estimate. Pin it down from a cold-start
-      // capture (switch off, let it cool, switch on, log ~60min) and set
-      // this to where the curve actually flattens.
-      const uint32_t WARMUP_MS = 30UL * 60UL * 1000UL;
+      // 20min comes from the measured curve, not a guess. That capture
+      // reached +-0.05C at 12-14min, but it wasn't a true cold start (the
+      // device had only been off a few minutes - BMP180 rose just 0.37C
+      // where a fully cooled enclosure has to climb its whole 1.74C rest
+      // offset). Extrapolating with the fitted time constant instead
+      // (BMP180 tau=5.9min, the slower of the two): 1.74C -> +-0.05C takes
+      // 20.9min. 20min covers both sensors from properly cold.
+      // TODO: confirm against a real cold-start capture (off for an hour,
+      // then log ~60min) - that turns this extrapolation into a
+      // measurement.
+      //
+      // Only after a cold boot. Whether a deep-sleep wake needs this too is
+      // an open question - see the SCD41 start-up transient note in README
+      // Known Issues; not assumed either way here.
+      const uint32_t WARMUP_MS = 20UL * 60UL * 1000UL;
       const char *warm = (id(cold_boot) && millis() < WARMUP_MS) ? "~" : "";
 
       switch (page) {
@@ -185,7 +197,7 @@ display:
         case 2:
           label = "VLHKOST";
           unit = "%";
-          snprintf(value_buf, sizeof(value_buf), "%.0f",
+          snprintf(value_buf, sizeof(value_buf), "%s%.0f", warm,
               id(humidity_scd41).has_state() ? id(humidity_scd41).state : id(cached_humidity));
           break;
         case 3:

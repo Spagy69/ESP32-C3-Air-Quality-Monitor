@@ -9,24 +9,36 @@ sensor:
   - platform: scd4x
     id: scd41_hub
     address: 0x62
-    # Fast on purpose - NOT just "fresher data". PollingComponent's FIRST
-    # update() only fires after one full update_interval has elapsed since
-    # boot (confirmed in ESPHome's own scheduler code, not assumed) - with
-    # the old 60s interval, a CESTA wake cycle (deep sleep, display auto-
-    # off/sleep at 30s - packages/menu.yaml) would go back to sleep BEFORE
-    # a single real CO2 reading ever arrived. That's not just bad for the
-    # CO2 alarm below - HA never saw a fresh reading in CESTA mode either
-    # way, every published value would've stayed the boot-time cached one.
+    # Fast on purpose - NOT just "fresher data". The old 60s interval left
+    # a CESTA wake cycle (deep sleep, display auto-off/sleep at 30s -
+    # packages/menu.yaml) going back to sleep before a single real CO2
+    # reading arrived. Bad for the alarm below, and HA never saw a fresh
+    # reading in CESTA either - every published value stayed the boot-time
+    # cached one.
+    #
+    # Why that happened is worth stating correctly, because an earlier
+    # version of this comment got it wrong: it is NOT that the first
+    # update() waits a full interval. ESPHome's scheduler starts an
+    # interval at now + a random offset in [0, min(interval/2, 5000ms))
+    # (Scheduler::calculate_interval_offset_), so the first poll lands
+    # within 5s of setup either way. The real problem is that this early
+    # poll arrives before the SCD41 flags data-ready - the driver spends
+    # ~1.5s on its own stop/configure/start sequence and the sensor needs
+    # another ~5s after that - so it publishes nothing, and the NEXT poll
+    # is a full interval later. At 60s that lands well after the device
+    # already went to sleep.
+    #
+    # Confirmed against a real capture (data/2026-08-22-power-on-warmup/):
+    # BMP180 at its 60s interval published ~3s after boot, while the SCD41
+    # at 10s only managed its first value at 11s - exactly the skipped
+    # first poll.
     #
     # 5s == the SCD41's own internal sampling rate in periodic measurement
     # mode, so this is as fast as the sensor has anything new to say and
     # costs no extra sensor power - we just stop throwing readings away.
-    # A CESTA wake window (30s) fits ~5 readings this way, which is what
-    # the alarm's arming rule below needs to judge whether the readings
-    # have settled and still have room left to actually fire. When a poll
-    # happens to land before the sensor flags data-ready, ESPHome simply
-    # skips that one, so the worst case degrades to the old ~10s cadence -
-    # never worse than before.
+    # It puts ~5 readings in the 30s CESTA window (first at ~11s, then
+    # every 5s), which is what the alarm's arming rule below needs to judge
+    # whether the readings have settled and still leave room to fire.
     update_interval: 5s
     # Compiled default - stays ON unless overridden. Actually toggling ASC
     # at runtime (menu ASC KALIBRACE item) needs raw I2C, since ESPHome's
