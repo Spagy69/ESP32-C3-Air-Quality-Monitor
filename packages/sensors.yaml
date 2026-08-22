@@ -77,16 +77,29 @@ sensor:
     automatic_self_calibration: true
     altitude_compensation: 435m
     # Static rest-offset (self-heating with the device idle, not charging).
-    # Value carried over from v1 (measured on the OLD enclosure) - but a 1h
-    # DOMA capture on the v2 enclosure (data/2026-08-22-doma-baseline/) says
-    # it still holds: the corrected reading sat at a flat 25.09-25.27C for
-    # the whole hour and landed within 0.44C of the independently-offset
-    # BMP180, and the readings matched what the room actually felt like.
-    # Still worth one reference-thermometer check to nail it down, but this
-    # is no longer an unvalidated v1 leftover.
+    # Measured against a reference thermometer, not carried over any more:
+    # data/2026-08-22-rest-offset/, on battery with the charger unplugged,
+    # 49min to settle, three readings five minutes apart. The old v1 value
+    # of 5.6 left the reading +1.07C high, so it goes to 6.7.
+    #
+    # Both sanity checks on that measurement passed - the two sensors were
+    # 0.35C apart (expected 0.3-0.5 at rest) and the BMP180 moved only
+    # 0.09C across the three readings, so the room was not drifting under
+    # us. A slow room drift is the trap here: both sensors lag the air by
+    # their own 11-15min time constant, and that lag would be read as
+    # offset error. What drift remained puts maybe 0.1C of the 1.07 down to
+    # lag rather than offset - well inside the thermometer's own ~0.5C
+    # accuracy, so it is not worth trying to subtract.
+    #
+    # Changing this also shifts the humidity output, since the SCD41
+    # derives RH from its own offset-corrected temperature - a correction
+    # downwards means RH comes out a few points higher, which is the right
+    # direction. It does NOT affect CO2: per Sensirion the offset only
+    # conditions the RH/T outputs.
+    #
     # Sent to the SCD41 once at startup via I2C (register write), not
     # re-applied during normal operation.
-    temperature_offset: 5.6°C
+    temperature_offset: 6.7°C
     co2:
       name: "CO2"
       id: co2_sensor
@@ -306,14 +319,10 @@ sensor:
       # answer on charging: measured at +3.8C peak on this sensor too, and
       # left uncorrected for the reasons spelled out up there.
       #
-      # Rest-offset carried over from v1 (1.74C). Cross-checked twice: it
-      # agrees with the SCD41 to within 0.44C over a 1h capture, and a
-      # reference thermometer (data/2026-08-22-charging-from-empty/) put
-      # both sensors roughly 0.5-1.0C high once things settled. That is
-      # within the reference's own accuracy, and it was taken with the
-      # charger still plugged in, so it is not yet grounds to change the
-      # number - see that capture's notes for the short measurement that
-      # would settle it.
+      # Rest-offset now measured against a reference thermometer rather
+      # than carried over from v1 - same run as the SCD41's above
+      # (data/2026-08-22-rest-offset/). The old 1.74 left this sensor
+      # +0.72C high, hence 2.46.
       filters:
         # The BMP180 occasionally returns one completely wrong sample: in
         # the 1h capture (data/2026-08-22-doma-baseline/, 2026-08-22, 01:56:54Z) it read
@@ -336,7 +345,7 @@ sensor:
             send_every: 1
             send_first_at: 1
         - lambda: |-
-            const float REST_OFFSET_BMP180   = 1.74f;  // cross-checked on v2, see above
+            const float REST_OFFSET_BMP180   = 2.46f;  // measured, see above
             const float CHARGE_OFFSET_BMP180 = 0.0f;   // TODO: measure
 
             float extra = REST_OFFSET_BMP180;

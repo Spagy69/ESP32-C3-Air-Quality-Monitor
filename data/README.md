@@ -65,9 +65,9 @@ Křivka má **dvě fáze**, které spolu nesouvisí:
 
 Doby ustálení (odchylka od finální hodnoty): SCD41 do ±0.1 °C od **12.0 min**, BMP180 od **9.0 min**, vlhkost do ±0.5 % od **10.9 min**, CO2 do ±15 ppm od 14.2 min.
 
-Z τ se dá extrapolovat na opravdu studený start (τ je vlastnost soustavy, na amplitudě nezávisí): BMP180 by z plných 1.74 °C potřeboval **20.9 min** na ±0.05 °C. Odtud `WARMUP_MS = 20 min` v [`packages/display.yaml`](../packages/display.yaml).
+Z τ se dala extrapolovat doba pro opravdu studený start: BMP180 by z plných 1.74 °C potřeboval 20.9 min na ±0.05 °C, a odtud tehdy vzniklo `WARMUP_MS = 20 min`. **Ta extrapolace byla špatně o víc než dvojnásobek** - viz `cold-start` níž, kde vyšlo 45 min. Fitovat exponenciálu na krátký, skoro ustálený ocas dá časovou konstantu necelou polovinu skutečné.
 
-**A jeden nález, který tam nikdo nehledal:** ta úvodní fáze **není tepelná**. Box byl při zapnutí prakticky na provozní teplotě, ale samotný čip SCD41 musel být *chladnější* než za provozu - vlastním teplem se drží zhruba 5.6 °C nad vzduchem v krabičce (to kompenzuje `temperature_offset`), takže za běhu sedí kolem 30.6 °C a po pár minutách bez proudu už stihl chladnout. A on přesto hlásil hodnotu odpovídající 33.1 °C. Vychladlý čip nemůže hlásit vyšší teplotu než rozehřátý. BMP180 přitom dělá pravý opak: startuje na svém minimu a roste. Vypadá to tedy na chování samotného SCD41 po startu periodického měření, ne na teplotu okolí. Proč to může být problém pro režim CESTA, je v README v Known Issues - a **zatím to není ověřené**.
+**A jeden nález, který tam nikdo nehledal:** ta úvodní fáze **není tepelná**. Box byl při zapnutí prakticky na provozní teplotě, ale samotný čip SCD41 musel být *chladnější* než za provozu - vlastním teplem se drží několik °C nad vzduchem v krabičce (to kompenzuje `temperature_offset`, tehdy nastavený na 5.6 - čísla v tomhle odstavci z něj vycházejí), takže za běhu sedí kolem 30.6 °C a po pár minutách bez proudu už stihl chladnout. A on přesto hlásil hodnotu odpovídající 33.1 °C. Vychladlý čip nemůže hlásit vyšší teplotu než rozehřátý. BMP180 přitom dělá pravý opak: startuje na svém minimu a roste. Vypadá to tedy na chování samotného SCD41 po startu periodického měření, ne na teplotu okolí. Proč to může být problém pro režim CESTA, je v README v Known Issues - a **zatím to není ověřené**.
 
 Vedlejší produkt: potvrzuje, jak ESPHome plánuje první čtení. BMP180 s 60s intervalem publikoval už ~3 s po bootu, SCD41 s 10s až v 11 s (jeho první poll padl dřív, než měl senzor `data_ready`, a přeskočil se).
 
@@ -152,7 +152,7 @@ Po ustálení (19:15-20:15, nabíjení dokončené) proti lihovému teploměru:
 | SCD41 | ~24.9 | ~24.1 | **+0.5 až +1.0 °C** |
 | BMP180 | ~24.6 | ~24.1 | **+0.3 až +0.7 °C** |
 
-Vypadá to, že oba senzory čtou zhruba **o půl stupně až stupeň víc**, než je skutečnost - tedy že oba offsety (`temperature_offset` 5.6 a `REST_OFFSET_BMP180` 1.74) jsou o tolik malé.
+Vypadá to, že oba senzory čtou zhruba **o půl stupně až stupeň víc**, než je skutečnost - tedy že oba offsety (tehdy `temperature_offset` 5.6 a `REST_OFFSET_BMP180` 1.74) jsou o tolik malé. **Potvrzeno a doměřeno** v `rest-offset` níž.
 
 **Ale zatím se podle toho nic nemění**, ze dvou důvodů: (a) lihový teploměr má sám přesnost tak ±0.5 °C a v poslední hodině skočil o 1.1 °C, zatímco senzory se pohnuly o 0.15 - takže část toho rozdílu je chyba odečtu; (b) nabíječka byla pořád zapojená, takže i "ustálený" stav ještě nese trochu zbytkového tepla. Co to uzavře, je v seznamu níž.
 
@@ -198,9 +198,26 @@ BMP180 přitom klesá naprosto hladce (24.57 → 22.68 za 50 min, jak krabička 
 
 #### Co z toho plyne
 
-Mechanismus zapadá do toho, co ukázaly předchozí záznamy: první čtení po `start_periodic_measurement` vypadá, jako by na něj ještě nebyl aplikovaný `temperature_offset` (5.6 °C), a ten se "dotáhne" během ~2 minut. Sedí to na obojí - při studeném startu je čip stejně studený jako krabička, takže chybějící offset dělá rozdíl proti BMP180 jen ~1.7-2.1 °C; tady čip celou dobu spánku běžel dál a je proti chladnoucí krabičce rozehřátý, takže totéž dělá ~5.5 °C.
+Mechanismus zapadá do toho, co ukázaly předchozí záznamy: první čtení po `start_periodic_measurement` vypadá, jako by na něj ještě nebyl aplikovaný `temperature_offset` (tehdy 5.6 °C), a ten se "dotáhne" během ~2 minut. Sedí to na obojí - při studeném startu je čip stejně studený jako krabička, takže chybějící offset dělá rozdíl proti BMP180 jen ~1.7-2.1 °C; tady čip celou dobu spánku běžel dál a je proti chladnoucí krabičce rozehřátý, takže totéž dělá ~5.5 °C.
 
 **Prakticky: v režimu s deep sleepem je teplota a vlhkost ze SCD41 nepoužitelná.** 30 s vzhůru je řádově míň, než těch ~2 min, co potřebuje na dotažení. Firmware to od té doby zahazuje (první 3 min po bootu), takže se do HA aspoň nedostane nesmysl - ale znamená to, že v CESTA nemá odkud teplotu brát. Nejnadějnější řešení je **brát ji z BMP180**, který je v těch samých datech čistý.
+
+### `2026-08-22-rest-offset/` - 1 h, klidový offset proti referenčnímu teploměru
+
+**Tímhle se zavřela kalibrace teploty.** Ruční odečty a podmínky jsou v [`reference-thermometer.md`](2026-08-22-rest-offset/reference-thermometer.md).
+
+Nabíječka i USB odpojené, DOMA, displej zhasnutý, 49 min na ustálení, pak tři odečty po pěti minutách - všechny shodně **23.9 °C**.
+
+| | senzor | teploměr | chyba | offset |
+|---|---|---|---|---|
+| SCD41 | 24.97 | 23.9 | **+1.07 °C** | 5.6 → **6.7** |
+| BMP180 | 24.62 | 23.9 | **+0.72 °C** | 1.74 → **2.46** |
+
+Obě kontroly platnosti prošly: rozdíl mezi senzory 0.35 °C (očekáváno 0.3-0.5) a BMP180 se přes všechny tři odečty pohnul jen o 0.090 °C, takže se místnost pod rukama neměnila. Ta druhá kontrola je podstatná - oba senzory za vzduchem zaostávají o svou časovou konstantu (11-15 min), takže drift v místnosti by se započítal jako chyba offsetu.
+
+Proti předchozímu pokusu (`charging-from-empty`, kde vyšlo +0.5 až +1.0 a +0.3 až +0.7) to sedí, jen je to čistší: tehdy byla zapojená nabíječka a teploměr během hodiny skákal o 1.1 °C.
+
+Vedlejší efekt: změna `temperature_offset` posune i vlhkost, protože SCD41 počítá RH ze své offsetem opravené teploty - vyjde asi o 4 procentní body výš. Ověřit to nemáme čím, vlhkoměr jako reference chybí. CO2 to neovlivní.
 
 ## Nové měření - jak ho sem přidat
 
@@ -210,7 +227,7 @@ Mechanismus zapadá do toho, co ukázaly předchozí záznamy: první čtení po
 
 ### Co ještě chybí změřit
 
-- **Klidový offset bez nabíječky** (~45 min, poslední chybějící kus kalibrace). Předchozí měření s teploměrem proběhlo se zapojenou nabíječkou, takže i "ustálený" stav nesl zbytkové teplo. Postup: odpojit nabíječku, nechat 45 min běžet na baterku, pak zapsat obě hodnoty z displeje/HA a hodnotu z lihového teploměru položeného vedle. Podle toho se doladí `temperature_offset` a `REST_OFFSET_BMP180`. Ideálně odečíst teploměr **třikrát po sobě** (rozptyl odečtu je na tomhle typu ±0.5 °C, viz `reference-thermometer.md`).
+- ~~Klidový offset bez nabíječky~~ **HOTOVO**, viz `2026-08-22-rest-offset/` výš - oba offsety jsou teď změřené proti referenci.
 - ~~CESTA transient test~~ **HOTOVO**, viz `2026-08-22-cesta-wake-cycles/` výš - skok se opakuje při každém probuzení a je ~5.5 °C.
 - **Teploty při nabíjení** - obě teploty přes celý nabíjecí cyklus, ideálně s referenčním teploměrem vedle. Z toho se naplní `CHARGE_OFFSET_SCD41` / `CHARGE_OFFSET_BMP180`, dnes obojí `0.0`.
 - **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.
