@@ -37,6 +37,20 @@ script:
                       id(display_on) = false;
                       id(oled_display).turn_off();
                       id(deep_sleep_1).set_sleep_duration(id(sleep_interval_minutes) * 60UL * 1000UL);
+                      // How thermally disturbed is the enclosure as it goes to
+                      // sleep? A device that has been running for a while is
+                      // warm and its temperature means nothing until it cools
+                      // (~2.5h, measured in data/2026-08-23-cesta-baseline/),
+                      // so mark it. One that only just booted never got warm -
+                      // marking that would put a "~" on the single most common
+                      // path into CESTA (switch the device on in the car, pick
+                      // the preset, let it sleep) for no reason at all.
+                      //
+                      // A step, not a ramp, and it deliberately errs towards
+                      // marking: 5min against the enclosure's ~45min time
+                      // constant is under 0.2C of warm-up.
+                      id(disturb_minutes) = (millis() < 5UL * 60UL * 1000UL)
+                                          ? (float) ${cooldown_min} : 0.0f;
                       // Park the SCD41 before sleeping - see the comment on
                       // scd41_stop_before_sleep in packages/sensors.yaml.
                       id(scd41_hub).write_command((uint16_t) 0x3F86);  // stop_periodic_measurement
@@ -107,6 +121,10 @@ binary_sensor:
                 id(oled_display).turn_off();
                 if (id(deep_sleep_mode_enabled)) {
                   id(deep_sleep_1).set_sleep_duration(id(sleep_interval_minutes) * 60UL * 1000UL);
+                  // Same disturbance bookkeeping as the auto-off path above -
+                  // this is the other way into deep sleep, so it needs it too.
+                  id(disturb_minutes) = (millis() < 5UL * 60UL * 1000UL)
+                                      ? (float) ${cooldown_min} : 0.0f;
                   id(manual_click_should_sleep) = true;
                 }
               } else {

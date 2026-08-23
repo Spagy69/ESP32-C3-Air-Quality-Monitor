@@ -191,7 +191,22 @@ display:
       // that fixes this - see the CHARGE_OFFSET comment in
       // packages/sensors.yaml for why a constant can't work - so the
       // honest thing is to say the number isn't trustworthy right now.
-      bool suspect = (id(cold_boot) && millis() < WARMUP_MS) || id(is_charging);
+      // Third case, added after data/2026-08-23-cesta-baseline/ showed the
+      // gap: an enclosure carried warm from continuous operation into a
+      // deep-sleep mode reads high for hours, and neither of the first two
+      // conditions covers it - cold_boot is false after a wake, and nothing
+      // is charging. Measured cool-down is ~2.5h to within the device's own
+      // stated accuracy.
+      //
+      // Deliberately driven by disturb_minutes rather than by is_charging,
+      // even for the charging case in this mode. The CV phase of a charge is
+      // flat and indistinguishable from slow discharge by voltage alone, so
+      // the charging flag's release edge cannot be trusted to the minute -
+      // but the heat it leaves behind decays over ~1.5h, which this window
+      // covers wherever exactly the flag happens to drop.
+      bool suspect = (id(cold_boot) && millis() < WARMUP_MS)
+                  || id(is_charging)
+                  || (!id(cold_boot) && id(disturb_minutes) < (float) ${cooldown_min});
 
       // "~" means one thing throughout: this number is not a fresh,
       // trustworthy reading right now. Three ways that happens - warming
