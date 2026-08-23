@@ -37,7 +37,7 @@ Bateriový monitor kvality vzduchu postavený na Seeed XIAO ESP32-C3, běžící
 | Rezistory 4.7kΩ x2 | Externí I2C pull-upy na SDA a SCL |
 | Hlavní vypínač (v2) | V sérii mezi baterkou a TP4056 modulem - úplné odpojení napájení, viz [WIRING.md](WIRING.md) |
 | 3D tištěný kryt (PETG), v2 | Viz [`enclosure/README.md`](enclosure/README.md), postup sestavení v [ASSEMBLY.md](ASSEMBLY.md) |
-| Malá pružinka (volitelně) | Pod tlačítko v předním krytu, viz [ASSEMBLY.md](ASSEMBLY.md) |
+| Tlačná pružinka 0.4 × 5.10 mm | Pod tlačítko v předním krytu, přestřižená v půlce - viz [ASSEMBLY.md](ASSEMBLY.md) |
 
 ## Zapojení
 
