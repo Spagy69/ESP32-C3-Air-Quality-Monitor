@@ -728,6 +728,27 @@ sensor:
 
       id(prev_batt_v) = v;
       id(cached_battery_v) = v;
+
+      // Battery percentage is published from here rather than from its own
+      // template tick. Both used to run on independent 60s intervals, and
+      // ESPHome starts each component's interval at now + a random offset in
+      // [0, 5s) (Scheduler::calculate_interval_offset_) - independently per
+      // component. Whenever the percentage fired first it found no voltage
+      // state, bailed out, and published nothing; with a ~26s awake window
+      // there is no second chance that wake, so HA recorded `unknown`. That
+      // happened in 21 of 72 wakes in data/2026-08-23-cesta-baseline/,
+      // despite a code comment claiming the ordering made it impossible.
+      //
+      // Computing it here removes the race by construction: the voltage is
+      // already in scope, so there is nothing to be too early for.
+      const float BATT_EMPTY_V = 3.00f;
+      const float BATT_FULL_V  = 4.12f;  // measured, see Battery Level below
+      float pct = (v - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100.0f;
+      if (pct > 100) pct = 100;
+      if (pct < 0) pct = 0;
+      id(cached_battery_pct) = pct;
+      id(battery_level).publish_state(pct);
+
       return v;
 
   # Rough % estimate (linear, 3.0V = 0%, 4.12V = 100%) - see README Known
@@ -753,26 +774,12 @@ sensor:
     unit_of_measurement: "%"
     device_class: battery
     state_class: measurement  # template sets no default - see battery_voltage
-    update_interval: 60s
-    lambda: |-
-      // Bail out if the voltage sensor hasn't produced anything yet.
-      // Without this, .state is NaN, every comparison against it is false
-      // so the clamps below don't catch it, and the NaN lands in
-      // cached_battery_pct - which is flash-backed, so the display would
-      // come up showing "nan%" on the next boot. In practice the voltage
-      // sensor is registered first and runs first on a shared 60s tick, so
-      // this shouldn't trigger; it costs one branch to not depend on that.
-      if (!id(battery_voltage).has_state()) return {};
-
-      const float BATT_EMPTY_V = 3.00f;
-      const float BATT_FULL_V  = 4.12f;  // measured, see comment above
-
-      float v = id(battery_voltage).state;
-      float pct = (v - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100.0f;
-      if (pct > 100) pct = 100;
-      if (pct < 0) pct = 0;
-      id(cached_battery_pct) = pct;
-      return pct;
+    # No lambda and no interval on purpose: the value is pushed from the
+    # battery_voltage lambda above, the moment a voltage exists. Polling this
+    # on its own 60s tick is what dropped the percentage in 21 of 72 wakes -
+    # the comment that used to live here claimed registration order made that
+    # impossible, and the data said otherwise.
+    update_interval: never
 
   # Diagnostic: minutes since the current charging episode started (0 when
   # not charging). Useful in Home Assistant to sanity-check the detection
