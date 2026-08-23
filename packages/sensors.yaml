@@ -412,11 +412,24 @@ sensor:
   # this lambda, and use that SAME cleaned value for both the published
   # state AND the charging detection below - no more split-brain between
   # what gets published and what the state machine actually reacts to.
+  #
+  # state_class MUST be spelled out on every template sensor in this file.
+  # The sensor platforms above (scd4x, bmp085 - and adc, the obvious
+  # alternative for this one) set state_class=measurement inside their own
+  # config schemas, so temperature/humidity/CO2/pressure get it for free.
+  # `platform: template` sets nothing - the word does not appear in
+  # template/sensor.py at all. Without this line HA receives no state class,
+  # drops the entity out of long-term statistics, and raises a "state class
+  # removed" repair issue offering to delete the ones already collected.
+  # Do not accept that offer: HA purges the states table after 10 days, so
+  # the statistics DB is the only record of battery behaviour that outlives
+  # a week - i.e. exactly the data the CESTA runtime work depends on.
   - platform: template
     name: "Battery Voltage"
     id: battery_voltage
     unit_of_measurement: "V"
     device_class: voltage
+    state_class: measurement
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
@@ -608,6 +621,7 @@ sensor:
     id: battery_level
     unit_of_measurement: "%"
     device_class: battery
+    state_class: measurement  # template sets no default - see battery_voltage
     update_interval: 60s
     lambda: |-
       // Bail out if the voltage sensor hasn't produced anything yet.
@@ -636,6 +650,7 @@ sensor:
     name: "Charging Duration"
     id: charging_duration
     unit_of_measurement: "min"
+    state_class: measurement  # template sets no default - see battery_voltage
     accuracy_decimals: 1
     update_interval: 60s
     lambda: |-
