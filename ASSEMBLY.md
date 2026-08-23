@@ -1,77 +1,92 @@
-# Sestavení
+# Sestavení (kryt v2)
 
-> **POZOR: tenhle postup je pro STARÝ kryt (v1).** V2 má úplně nový kryt a
-> tenhle dokument ještě nebyl přepsaný - jakmile budou k dispozici podklady k
-> novému krytu (fotky/model), přepsat postup níže. Zapojení komponent uvnitř
-> se nemění (viz [WIRING.md](WIRING.md)), jen fyzické rozmístění a kroky
-> sestavení.
+<p align="center">
+  <img src="images/v2.webp" width="400">
+</p>
 
-Sestavuje se pomocí tavné pistole (hot glue). Postup níže je v pořadí, v jakém dává smysl jej provádět, včetně dvou rizikových míst, na která je třeba dát pozor.
+Postup platí pro **kryt v2** ([`enclosure/case v2.3mf`](enclosure/README.md)). Zapojení komponent se proti v1 nemění, to je pořád v [WIRING.md](WIRING.md) - jiné je jen fyzické uspořádání a pořadí kroků.
 
-## 1. Sestava baterie, nabíjení a desky
+Lepí se tavnou pistolí. Text níž používá "natavit" i "nalepit" ve stejném významu, kromě kroku 3, kde jde opravdu o **zatavení otvoru** (spára musí být zadělaná, ne jen přichycená).
 
-1. Natavit **TP4056 modul** na spodek baterie.
-2. Natavit **ESP32-C3 (XIAO) vzhůru nohama** navrch baterie. Konec s USB-C musí vyčnívat přes okraj baterie (baterie a deska pak dohromady tvoří tvar písmene L, viz náčrt níže).
+## Co se změnilo proti v1
 
-Tvar půdorysu (pohled shora): deska je nahoře přes celou šířku, konektor USB-C vyčnívá z jejího pravého konce a přesahuje i přes okraj desky, baterie je dole a je užší než deska, takže nezasahuje pod USB-C.
+| | v1 | v2 |
+|---|---|---|
+| Materiál | Bambu PLA Basic | **Aurapol PETG** - tvrdší a odolnější |
+| Velikost | menší | o něco větší |
+| Teplotní senzory | nalepené na strop krytu | **vlastní kompartment dole**, zatavený zvlášť |
+| Tlačítko | nalepené na stranu s baterií, do předního dílu jen zapadlo | **natavené přímo na přední kryt**, volitelně s pružinkou |
+| Ikonka na tlačítku | žádná | **symbol napájení** ⏻ |
+| Anténa | dole, pod celou sestavou | **nahoře na krabičce**, co nejvíc vepředu |
+| TP4056 | pod baterkou | **podél baterky**, sedí na ní |
 
-```
-┌───────────────────────────────────────────────┐
-│                     ESP32-C3                  │
-└───────────────────────────────────────────────┘
-┌───────────────────────────────┐┌──────────────────────┐
-│                               ││        USB-C         │
-│                               ││                      │
-│            BATERIE            │└──────────────────────┘
-│                               │
-│                               │
-│                               │
-└───────────────────────────────┘
-```
+Ten kompartment dole je hlavní změna, která má vliv na měření: senzory jsou teď oddělené vlastní přepážkou od baterky, TP4056 modulu i ESP32, tedy od všeho, co v krabičce topí.
 
-Skutečné pořadí vrstev odspodu nahoru (od dna krytu):
+## 1. Sestava baterky, nabíjení a desky
 
-```
-  ┌─────────────────────────────────────┐
-  │            ESP32-C3 (vzhůru nohama) │  ← nahoře, USB-C vyčnívá ven
-  ├─────────────────────────────────────┤
-  │               baterie               │
-  ├─────────────────────────────────────┤
-  │            nabíjecí modul (TP4056)  │
-  ├─────────────────────────────────────┤
-  │            anténová deska           │  ← dole, na dně krytu
-  └─────────────────────────────────────┘
-```
+1. Natavit **baterku a TP4056 modul na sebe**. Modul jde **podél baterky**, takže na ní sedí a nepřesahuje její obrys.
+2. Natavit **ESP32-C3 (XIAO)** na **širší stranu baterky**, a to tak, aby **USB-C vyčnívalo** ven přes okraj baterky.
 
-### Anténa: externí, na kabelu
+Vznikne z toho jeden kompaktní blok, dál v textu **stack**. Ten se do krabičky vkládá až na konci (krok 6), protože by jinak překážel u všeho ostatního.
 
-Anténa není vestavěná do desky XIAO, ale jde o samostatnou externí flat/nálepkovou WiFi anténu připojenou kabelem (u.FL) k desce, umístěnou jako spodní vrstva sestavy na dně krytu. Protože je na kabelu, lze s ní hýbat nezávisle na desce, což je oproti vestavěné anténě výhoda: pokud by v této poloze byl signál slabý, není nutné přemísťovat celou sestavu, stačí přesměrovat jen anténu.
+## 2. Teplotní senzory do spodního kompartmentu
 
-I tak anténa leží přímo pod nabíjecím modulem a baterií, takže mírný útlum signálu skrz sestavu je stále možný. Než se to nalepí natrvalo:
-- Zkusit zařízení nejdřív poskládat volně (bez lepení) v plánované orientaci a zkontrolovat `Signal strength` v logu (`[wifi:xxxx] Signal strength: -XX dB`).
-- Orientačně: -50 až -60 dB je dobré, -60 až -70 dB je v pořádku pro běžný provoz, -70 až -80 dB je slabé, ale funkční, pod -80 dB už hrozí časté výpadky.
-- Pokud je signál slabý, zkusit anténu (díky kabelu) posunout blíž ke stěně krytu nebo dál od baterie a nabíjecího modulu, než se natrvalo přilepí ke dnu.
+3. **Jako úplně první věc** do krabičky přijdou **oba teplotní senzory** - SCD41 i BMP180. Natavit je na **strop spodního kompartmentu**.
 
-## 2. Vložení sestavy do krytu
+Proč jako první: až se otvor zataví (krok 4), není se tam kudy dostat.
 
-3. Natavit tuto celou sestavu (TP4056, baterie, deska) do krytu, na stranu s plochou anténou.
+## 3. Zatavit spodek
 
-## 3. Senzory a displej
+4. Nasadit **novou záklopku na spodek krabičky** - zakrývá kompartment i spodní stěnu krabičky. **Zatavit.** Výsledkem musí být **celý otvor zadělaný**, ne jen přichycená destička.
 
-4. Nalepit **SCD41 a BMP180** na strop dílu.
-5. Nalepit **displej** na přední část dílu.
+## 4. Tlačítko do předního krytu
 
-## 4. Tlačítko (na sucho, pak natrvalo)
+5. Vložit **tlačítko do předního krytu**. Volitelně pod něj přidat **malou pružinku** - vrací tlačítko zpátky a zlepšuje odezvu.
+6. **Natavit tlačítko na přední kryt.** (Ve v1 se lepilo naopak na stranu s baterií a do předního dílu jen zapadlo.)
 
-6. **Zkusit oba díly krytu secvaknout na sucho** (bez tlačítka), aby bylo vidět, kam přesně tlačítko sedí vůči spínači/pinu na desce uvnitř.
-7. Kryt znovu rozevřít.
-8. **Nalepit tlačítko na stranu krytu s baterií** (ne na přední díl).
-9. Vložit tlačítko do předního dílku a **nasadit přední kus na kryt najednou, v jednom kroku** (ne postupně po částech).
+## 5. Spínač a displej
+
+7. Natavit **hlavní vypínač na baterku, vlevo dole**.
+8. Natavit **displej**.
+
+## 6. Stack do krabičky
+
+9. Vzít celý **stack (ESP32 + baterka + TP4056)** a nalepit ho **dozadu do krabičky**. **USB-C musí trefit díru vzadu** - tohle je jediné místo, kde se pozice nedá po zaschnutí opravit, takže stojí za to si to nejdřív zkusit nasucho.
+
+## 7. Anténa
+
+10. Nalepit **anténu nahoru na krabičku**, ideálně **co nejvíc dopředu**.
+
+Anténa je externí flat/nálepková WiFi anténa na u.FL kabelu, ne vestavěná PCB anténa na desce. Ve v1 ležela dole **pod** baterkou a TP4056 modulem, takže signál procházel skrz celou sestavu; nová pozice nahoře a vepředu tenhle problém obchází.
+
+I tak se vyplatí to před nalepením natrvalo zkontrolovat - anténa je na kabelu, takže jde posunout bez rozebírání zbytku:
+
+- Poskládat zařízení volně (bez lepení) a podívat se do logu na `[wifi:xxxx] Signal strength: -XX dB`.
+- Orientačně: -50 až -60 dB je dobré, -60 až -70 dB v pořádku pro běžný provoz, -70 až -80 dB slabé, ale funkční, pod -80 dB už hrozí časté výpadky.
+
+## 8. Hotovo
+
+Nasadit přední kryt. Tím je sestavení kompletní.
 
 ### Riziko: prasknutí při secvaknutí
 
-Při secvakávání dílů dohromady (jak na sucho v kroku 6, tak natrvalo v kroku 9) hrozí mírné riziko prasknutí krytu. Díly by měly jít spojit lehce, bez použití síly. Pokud spoj nejde snadno, je vhodné zkontrolovat, zda něco uvnitř nepřekáží, a pokus zopakovat.
+Pořád platí z v1 - při secvakávání předního krytu **hrozí prasknutí**. Díly musí jít spojit lehce, bez síly. Když to nejde, něco uvnitř překáží; rozebrat a zkontrolovat, ne to domáčknout. PETG je proti PLA houževnatější a spíš se ohne, než praskne, ale spoléhat se na to nedá.
 
-## 5. Hotovo
+---
 
-Po nasazení předního dílu je sestavení kompletní.
+## Poznámky k tisku
+
+Detaily jsou v [`enclosure/README.md`](enclosure/README.md). Ve zkratce: tištěno na **Bambu Lab X1C s AMS** (stejná tiskárna jako v1), materiál **Aurapol PETG**, celý model na **0.2mm** vrstvě, podpory jen u tlačítka a u předního krytu.
+
+**Bez AMS to jde taky.** Jediný díl, kde se barvy míchají, je **přední tlačítko** se symbolem napájení - kdo nemá AMS, vytiskne ho jednobarevně. Ikonka je pak reliéf místo barevného kontrastu, funkčně se nemění nic.
+
+---
+
+## Co je potřeba doplnit
+
+Postup výš je sepsaný z popisu, ne z vlastního sestavení. Tyhle body z něj jednoznačně nevyplývají a při dalším sestavování je stojí za to upřesnit:
+
+1. **Displej (krok 8)** - lepí se na **přední kryt** (jako tlačítko), nebo na přední stěnu těla krabičky? Ve v1 to bylo na tělo. Pokud na kryt, je přední díl po sestavení uvázaný na kabelech k desce vzadu, což se hodí vědět předem.
+2. **Spínač (krok 7)** - "natavit na baterku vlevo dole": jde o nalepení na **samotnou baterku** (a dovnitř se pak dostane se stackem v kroku 9), nebo do **krabičky vlevo dole**? Když na baterku, patřil by logicky už do kroku 1.
+3. **ESP32 (krok 2)** - "na širší stranu baterky" znamená na **protilehlou** stranu než TP4056 modul, nebo na tu samou?
+4. **Pružinka (krok 5)** - jaký rozměr/typ, ať se dá dohledat.

@@ -3,7 +3,7 @@
 Bateriový monitor kvality vzduchu postavený na Seeed XIAO ESP32-C3, běžící na [ESPHome](https://esphome.io/) a integrovaný do Home Assistant. Měří CO₂, teplotu, vlhkost a tlak, s malým OLED displejem pro stav a tlačítkem pro probuzení / trvalé zapnutí.
 
 <p align="center">
-  <img src="images/final.webp" width="400">
+  <img src="images/v2.webp" width="400">
 </p>
 
 
@@ -36,7 +36,8 @@ Bateriový monitor kvality vzduchu postavený na Seeed XIAO ESP32-C3, běžící
 | Rezistory 220kΩ + 100kΩ | Dělič napětí baterky (BAT+ → GPIO4 → GND) |
 | Rezistory 4.7kΩ x2 | Externí I2C pull-upy na SDA a SCL |
 | Hlavní vypínač (v2) | V sérii mezi baterkou a TP4056 modulem - úplné odpojení napájení, viz [WIRING.md](WIRING.md) |
-| 3D tištěný kryt (PLA), v2 | Nový kryt, viz [`enclosure/README.md`](enclosure/README.md) - postup sestavení v [ASSEMBLY.md](ASSEMBLY.md) zatím odpovídá starému (v1) krytu |
+| 3D tištěný kryt (PETG), v2 | Viz [`enclosure/README.md`](enclosure/README.md), postup sestavení v [ASSEMBLY.md](ASSEMBLY.md) |
+| Malá pružinka (volitelně) | Pod tlačítko v předním krytu, viz [ASSEMBLY.md](ASSEMBLY.md) |
 
 ## Zapojení
 
@@ -83,7 +84,11 @@ Alarm se po každém zapnutí/probuzení **neaktivuje hned** - hodnoty po startu
 
 ## Kryt
 
-3D tištěný z PLA. Zdrojový soubor: [`enclosure/README.md`](enclosure/README.md). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).
+3D tištěný z **Aurapol PETG** (v1 byl z PLA), tištěno na Bambu Lab X1C s AMS. Zdrojový soubor a tisková nastavení: [`enclosure/README.md`](enclosure/README.md). Postup sestavení viz [ASSEMBLY.md](ASSEMBLY.md).
+
+Ve v2 mají oba teplotní senzory **vlastní kompartment ve spodku krabičky**, oddělený přepážkou od baterky, TP4056 modulu i ESP32 - tedy od všeho, co uvnitř topí. Kompartment se po nalepení senzorů zatavuje záklopkou. Tlačítko má nově **symbol napájení** a natavuje se přímo na přední kryt.
+
+Vícebarevný je jediný díl (přední tlačítko). Kdo nemá AMS, vytiskne ho jednobarevně - ikonka pak zůstane jako reliéf.
 
 ## Baterie
 
