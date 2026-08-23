@@ -2,7 +2,7 @@
 
 Tento dokument je určen pro AI asistenta, který na projektu pokračuje po mně. Shrnuje celou historii, klíčová rozhodnutí, aktuální stav firmwaru a otevřené věci. Ostatní soubory v tomhle balíčku (README.md, WIRING.md, ASSEMBLY.md, air-quality-monitor.yaml) jsou aktuální projektová dokumentace/kód - tenhle dokument je navíc, jako kontext a historie k nim.
 
-**Poslední aktualizace:** srpen 2026, po implementaci menu systému a hlubokého spánku.
+**Poslední aktualizace:** srpen 2026, po hardwarovém ověření oprav uspávaného režimu (`data/2026-08-23-cesta-po-oprave/`).
 
 ---
 
@@ -66,6 +66,14 @@ Probíhá **kompletní redesign firmwaru pro v2** (stejný hardware/zapojení ja
   - **BUG 3 (opraveno srpen 2026, viz bod 2i níž): `Battery Level` chybí ve 21 ze 72 probuzení.** Závod, o kterém komentář v kódu tvrdí, že nastat nemá. Obě šablony mají 60s interval a ESPHome jim dává **nezávislý** náhodný offset v [0, 5 s); když padne `battery_level` dřív, uplatní se `if (!id(battery_voltage).has_state()) return {};` a druhá šance v tom ~26s okně nepřijde. Čisté řešení: publikovat procenta z lambdy `battery_voltage` místo vlastním tikem.
   - **Vedlejší číslo: chladnutí po přepnutí z nepřetržitého provozu do spánku trvá ~2.5-3 h** (τ ≈ 57 min z log-fitu, ale není to jedna exponenciála - z prvních bodů vychází 28-44 min). Zahřívání po studeném startu je proti tomu ~45 min. Vlnovka tohle taky nepokrývá.
   - **Ze SCD41 nepřišla za celých 12 h ani jedna teplota nebo vlhkost** - filtr `SCD41_SETTLE_MS = 3 min` proti 30s oknu, tedy chování podle návrhu. Nové je, že v HA to není zamrzlá hodnota, ale `unknown` po celou dobu; komentář v `sensors.yaml` o "last cached value" platí pro **displej**, ne pro Home Assistant.
+- **OVĚŘOVACÍ ZÁZNAM PO OPRAVÁCH (srpen 2026, `data/2026-08-23-cesta-po-oprave/`) - 2.8 h, 16 probuzení, čtyři z pěti hardwarových testů PROŠLY.** Stejný režim a stejná krabička jako noční záznam, jen s firmwarem z větve `v2-deep-sleep-fixes`. Flashnuto v 17:40 lokálně, interval 10 min, HA připojení zapnuté, baterka odpojená od nabíječky (3.975 V / 87 %), tlačítko ani jednou.
+  - **Offset: PROŠLO.** Flash boot je ještě `cold_boot`, takže je skok vidět přímo v datech: 19.746 °C v 17:40 → **22.421 °C při prvním probuzení ze spánku**, tedy +2.676 proti konstantě 2.46 (zbytek je skutečný drift raw za těch 10 min). Proti referenčnímu teploměru ve třech srovnatelných bodech **−0.90 °C, sd 0.18**, kde ta samá data bez opravy dávají −3.36. Spec předpovídal −1.09.
+  - **Procenta baterky: PROŠLO.** `battery_level` má **0 `unknown` za 16 probuzení** proti 22 ze 64 řádků v nočním záznamu. Že řádků je jen 12, výpadek není - HA zapisuje jen změny a pětkrát se hodnota bit-identicky zopakovala. Hodnoty klesají hladce 87.05 → 86.38 %, žádný skok zpátky nahoru, takže `batt_v_hist1/2` opravdu přežily spánek.
+  - **Medián přes probuzení: PROŠLO.** Šestnáct hodnot BMP180 tvoří monotónně klesající řadu bez výjimky, největší skok mezi probuzeními **−0.092 °C** proti −0.886 před opravou. Rozptyl kroku napětí spadl z 8.02 mV na **1.45** (spec předpovídal 2.16), rezidua lineárního fitu 0.91 mV proti 6.8.
+  - **Falešné nabíjení: PROŠLO.** Největší kladný krok napětí je +2.45 mV proti prahu +20, tedy **8× rezerva**, nula sepnutí za 11 kroků. `Charging` zůstalo `off`, `Charging Duration` na 0.
+  - **Neověřené zůstávají dvě věci:** že `Charging` sepne, když se nabíječka **opravdu** připojí (nabíječka připojená nebyla), a chování **vlnovky** (je vidět jen na displeji, ten při časovaném probuzení nesvítí, a tlačítko zmáčknuté nebylo).
+  - **Vedlejší nález: čítače běží o 4 % pomaleji, než ukazují.** Skutečná perioda je 10.41 min, ale `charge_minutes` i `disturb_minutes` přičítají `sleep_interval_minutes`, tedy rovných 10. Okno vlnovky nastavené na 150 min tak reálně trvá ~156 min. Jedním směrem a proti 150 min je to šum - neopravuje se, ale je dobré to vědět, než se z těch čítačů začne něco počítat.
+  - **Teplota a vlhkost ze SCD41 jsou tam pořád trvale `unknown`** (0 platných hodnot za celý záznam). Oprava to neřešila a je to teď **největší zbylá díra v uspávaném režimu** - jediný zdroj teploty tam je BMP180.
 - Poslední naměřené hodnoty se cachují do flash (`restore_value: true` globals) a displej je hned po zapnutí/probuzení ukazuje, místo loading baru/"--". `esp_sleep_get_wakeup_cause()` bylo kvůli tomu odstraněné (nebylo pro co ho potřebovat), ale **vrátilo se zpátky** s indikátorem zahřívání - teď v `on_boot` prioritě 600 plní globál `cold_boot`, aby šlo odlišit studený start od probuzení. `esp_sleep.h` se do buildu dostává přes header deep_sleep komponenty, žádný extra `includes:` netřeba (ověřeno kompilací).
 - `preferences: flash_write_interval: 1s` přidáno, aby se cachovaná hodnota nezralila, pokud deep sleep vypne napájení dřív, než výchozí 1min interval stihne zapsat do flash.
 - Mrtvý kód z bodu "Známé drobnosti k úklidu" (níže v tomhle souboru) byl smazaný (button_press_start_ms, long_hold_5s_fired, last_release_held_ms).
@@ -76,9 +84,9 @@ Probíhá **kompletní redesign firmwaru pro v2** (stejný hardware/zapojení ja
 - DOMA/CESTA presety a CO2 alarm práh (3000/2700 ppm) uživatel potvrdil - CESTA interval finálně 10 min (ne navrhovaných 5).
 
 **Otevřené položky, na kterých čekáme (potřeba reálný hardware/uživatel):**
-1. Reálný hardwarový test celého v2 firmwaru (menu navigace všech 6 položek, deep sleep probuzení **tlačítkem** - časovačem je ověřené 72 cykly v `data/2026-08-23-cesta-baseline/` a CO2 se v nich pokaždé rozjelo, CO2 alarm, ASC toggle - viz jeho vlastní pozn. výš o testu s logováním). Nově k tomu: `~` indikátor musí být po studeném startu a **nesmí** být po probuzení z deep sleepu; a v CESTA ověřit, že alarm stihne sepnout ještě ve 30s okně (dýchnout na senzor).
+1. Reálný hardwarový test celého v2 firmwaru (menu navigace všech 6 položek, deep sleep probuzení **tlačítkem** - časovačem je ověřené 72 cykly v `data/2026-08-23-cesta-baseline/` a CO2 se v nich pokaždé rozjelo, CO2 alarm, ASC toggle - viz jeho vlastní pozn. výš o testu s logováním). Nově k tomu: `~` indikátor musí být po studeném startu, a po probuzení z deep sleepu **jen když krabička chladne** - od srpna 2026 to už není prosté "po probuzení nikdy", viz bod 8 níž; a v CESTA ověřit, že alarm stihne sepnout ještě ve 30s okně (dýchnout na senzor).
 2. Kalibrační konstanty: **teplotní offsety HOTOVO** (viz `2026-08-22-rest-offset` výš, změřeno proti referenci: 6.7 a 2.46). **`CHARGE_OFFSET_*` HOTOVO** - zůstávají 0.0, ale už jako změřené rozhodnutí, teď potvrzené **dvěma** záznamy: nabíjení z prázdné baterky dá vrchol +3.7 °C, dobíjení ze 64 % jen +2.35 °C. Stejná krabička, stejná nabíječka, rozdíl 1.4 °C jen kvůli počátečnímu stavu baterky - žádná konstanta ani časová křivka to nepokryje, značí se to vlnovkou. **Zbývá už jen dělič napětí** (násobič 3.2 ověřený jen v bodě 4.15 V) - chtělo by to multimetr ještě kolem 3.5 a 3.8 V.
-2b. **Offset self-heatingu se nejspíš liší mezi DOMA a CESTA** (nezměřeno, nová položka srpen 2026). Klidový offset byl ověřený v DOMA, kde je zařízení pořád vzhůru se zapnutou WiFi; v CESTA většinu času spí, zahřívá se výrazně míň, takže stejný offset tam pravděpodobně odečítá víc než by měl. Potřebuje vlastní záznam v CESTA proti referenčnímu teploměru. Zatím jen zdokumentováno v README Known Issues, firmware s tím nepočítá.
+2b. ~~Offset self-heatingu se nejspíš liší mezi DOMA a CESTA~~ **HOTOVO (srpen 2026), předpověď seděla.** V uspávaném režimu se offset odečítal celý, i když tam žádné self-heating teplo není - chyba **−3.55 °C**, změřeno v `data/2026-08-23-cesta-baseline/`. Opraveno klíčováním na `cold_boot` a ověřeno na železe v `data/2026-08-23-cesta-po-oprave/`: **−0.90 °C**. Zbytek otevřený, viz bod 8.
 2c. ~~Opravdu studený start~~ **HOTOVO** - viz `data/2026-08-22-cold-start/` výš. `WARMUP_MS` = 45 min je teď změřené.
 2d. ~~CESTA transient test~~ **HOTOVO** - viz `data/2026-08-22-cesta-wake-cycles/` výš. Odpověď: ano, opakuje se, ~5.5 °C. Vyřešeno fallbackem SCD41 → BMP180 → cache na stránce TEPLOTA.
 2e. ~~Klidový offset bez nabíječky~~ **HOTOVO** - viz `data/2026-08-22-rest-offset/` výš. Obě kontroly platnosti prošly, offsety nastavené na 6.7 a 2.46.
@@ -94,16 +102,18 @@ Probíhá **kompletní redesign firmwaru pro v2** (stejný hardware/zapojení ja
 2h. ~~Napětí baterky vypadlo z dlouhodobých statistik HA~~ **HOTOVO (srpen 2026).** Nahlásil uživatel: Home Assistant vyhodil repair issue "Entita již nemá třídu stavu" na `sensor.air_quality_monitor_battery_voltage` a nabídl smazání už nasbíraných statistik. Příčina: `Battery Voltage`, `Battery Level` i `Charging Duration` jsou `platform: template`, a **template si žádný `state_class` nenastavuje**. Ověřeno ve zdrojácích ESPHome 2026.4.0 na disku: `scd4x/sensor.py`, `bmp085/sensor.py` i `adc/sensor.py` mají `state_class=STATE_CLASS_MEASUREMENT` přímo v config schématu, `template/sensor.py` slovo `state_class` neobsahuje vůbec. Proto si HA stěžoval jen na napětí - teplota/vlhkost/CO2/tlak to dostaly zadarmo od svých komponent. `state_class` se přitom v celé git historii repa nevyskytl ani jednou (`git log -S`), takže statistiky pocházejí z firmwaru staršího než repo (8. 8. 2026); mezera od té doby je nenávratně pryč. Oprava: `state_class: measurement` explicitně na všech třech template senzorech + komentář, proč to tam musí být.
 
 2i. ~~Tři bugy z nočního záznamu~~ **HOTOVO (srpen 2026)** - implementováno na větvi
-`v2-deep-sleep-fixes`, spec a plán jsou v `docs/superpowers/`. Šest commitů, každý
-prošel `esphome config` i `compile`; **na hardwaru neověřeno nic**. Co se udělalo:
-klidový offset se odečítá jen když `cold_boot` (chyba −3.55 → −1.09 °C); BMP180 a
+`v2-deep-sleep-fixes`, spec a plán jsou v `docs/superpowers/`. Sedm commitů, každý
+prošel `esphome config` i `compile`, a **čtyři z pěti hardwarových testů prošly** -
+viz `data/2026-08-23-cesta-po-oprave/` a bod 8 níž. Co se udělalo:
+klidový offset se odečítá jen když `cold_boot` (chyba −3.55 → změřených −0.90 °C); BMP180 a
 tlak čtou po 5 s, takže se okno mediánu naplní uvnitř probuzení; medián napětí a
 stav nabíjení se ukládají do flash a v `on_boot` se při studeném bootu nulují;
 detekce nabíjení má ve spánku vlastní pravidlo přes krok mezi probuzeními (prahy
 prohnané `data/threshold-sweep.py` přes tři záznamy); procenta baterky se publikují
 z lambdy napětí; a vlnovka nově pokrývá okno chladnutí 150 min. **Otevřené zůstává**
-zbytkových −1.09 °C (chce tři odečty teploměrem v uspávaném režimu) a všechny tři
-hardwarové testy z bodu 8 níž. Původní popis pro kontext:
+zbytkových −0.90 °C (chce tři odečty po pěti minutách v uspávaném režimu) a dva
+hardwarové testy z bodu 8 níž, na které ověřovací záznam nedosáhl: sepnutí nabíjení
+s připojenou nabíječkou a chování vlnovky. Původní popis pro kontext:
 
 **Tři bugy z nočního záznamu, VŠECHNY NEOPRAVENÉ** (`data/2026-08-23-cesta-baseline/`, detaily v v2 STATUS výš a v README Known Issues): (a) teplota v uspávaném režimu je **−3.55 °C** vedle, protože se tam odečítá klidový offset změřený v DOMA, a **vlnovka to neoznačí**; (b) `median` filtry ani detekce nabíjení v tom režimu nefungují, protože všechny jejich globály jsou `restore_value: false` a deep sleep je plný reboot - **`Charging` tam nemůže sepnout nikdy**; (c) `Battery Level` vypadne ve 21 ze 72 probuzení kvůli závodu s `battery_voltage`. Ani jedno se nedá spravit naslepo: (a) chce rozhodnout, jestli se offset má větvit podle režimu a co se zbytkovými −1.09 °C (na to chybí pořádné měření - tři odečty, ne jeden), (b) chce projít každý `restore_value: false` globál a rozhodnout, co má spánek přežít, (c) je nejjednodušší z těch tří.
 
@@ -224,12 +234,13 @@ deep_sleep:
 4. ~~ASC toggle (fáze 3)~~ **HOTOVO** - implementováno přes raw I2C (`0x2416`), položka **ASC KALIBRACE** v menu. Na hardwaru ale neozkoušené.
 5. **Kalibrace děliče napětí přes celý rozsah** - pořád otevřené, jediný ověřený bod je 4.15 V. Poslední nedodělaná kalibrace v projektu.
 6. **Notifikace na nízké napětí v HA** - navrženo, neimplementováno (patří to do HA automatizací, ne do firmwaru).
-8. **Hardwarové testy k opravám uspávaného režimu (srpen 2026)** - z principu je nejde ověřit ze stolu, `esphome compile` o nich nic neřekne:
-   - Teplota v CESTA musí po flashnutí skočit o **~2.5 °C nahoru** proti dnešku. Když nevyskočí, offset se pořád odečítá a klíč `cold_boot` nefunguje, jak se čeká.
-   - Po přepnutí **nahřáté** krabičky do CESTA musí vlnovka zmizet zhruba po 2.5 h. Po zapnutí vypínačem a okamžitém přepnutí se objevit **nesmí** - to je ten rozdíl mezi „stihlo se ohřát" a „nestihlo".
-   - **`Battery Level` nesmí v HA vypadnout ani jednou** přes noc v uspávaném režimu (dnes chybí nejméně v 21 ze 72 probuzení). Tohle je jediné ověření té opravy - simulovat plánovač ESPHome ze stolu nejde.
-   - S nabíječkou zapojenou v CESTA musí `Charging` chytnout do ~20 min. Zároveň se tím poprvé ověří, že příznak vůbec může sepnout - dosud nemohl.
-   - Výkyv BMP180 typu −0.886 °C se nesmí opakovat. Taky jen z nového záznamu: dnešní data mají jedno čtení za probuzení, takže v nich ta oprava vidět být nemůže.
+8. **Hardwarové testy k opravám uspávaného režimu (srpen 2026)** - z principu je nejde ověřit ze stolu, `esphome compile` o nich nic neřekne. **Tři z nich zavřel ověřovací záznam `data/2026-08-23-cesta-po-oprave/`** (2.8 h, 16 probuzení, flashnuto 17:40), čtvrtý zavřela reference v tom samém záznamu, pátý a šestý zůstávají:
+   - ~~Teplota v CESTA musí po flashnutí skočit o **~2.5 °C nahoru**~~ **PROŠLO.** Skok +2.676 °C při prvním probuzení ze spánku (19.746 → 22.421), proti konstantě 2.46. Poznámka pro příště: skok **není** vidět hned po flashnutí - ten boot je sám `cold_boot` a offset se v něm ještě odečítá.
+   - ~~Chyba proti referenčnímu teploměru~~ **PROŠLO, ale ne úplně zavřené.** Tři body dávají **−0.90 °C** (sd 0.18) proti −3.55 před opravou. Zbytek je pořád dvojnásobek deklarované ±0.5 °C - na novou konstantu je potřeba **tři odečty po pěti minutách** na konci aspoň tříhodinového běhu, teploměr prokazatelně vedle krabičky, a **zapsat, který teploměr to je**.
+   - ~~**`Battery Level` nesmí v HA vypadnout ani jednou**~~ **PROŠLO.** 0 `unknown` za 16 probuzení proti 22 ze 64 řádků v nočním záznamu.
+   - ~~Výkyv BMP180 typu −0.886 °C se nesmí opakovat~~ **PROŠLO.** Šestnáct hodnot tvoří monotónně klesající řadu, největší skok −0.092 °C. Rozptyl kroku napětí spadl z 8.02 na 1.45 mV.
+   - **NEOVĚŘENO: s nabíječkou zapojenou v uspávaném režimu musí `Charging` chytnout do ~20 min.** Ověřovací záznam dokazuje jen opačný směr - že příznak nesepne sám od sebe (0 z 11 kroků, největší kladný krok +2.45 mV proti prahu +20, tedy 8× rezerva). Že sepne, když se nabíječka opravdu připojí, ověřené není. Stačí na to ~30 min v tom režimu s nabíječkou.
+   - **NEOVĚŘENO: chování vlnovky.** Po přepnutí **nahřáté** krabičky do uspávaného režimu musí zmizet zhruba po 2.5 h; po zapnutí vypínačem a okamžitém přepnutí se objevit **nesmí**. Odečítá se to ručně: vlnovka je vidět jen na displeji a ten při časovaném probuzení nesvítí, takže se musí zmáčknout tlačítko.
 7. ~~Úklid mrtvého kódu~~ **HOTOVO** (viz sekce výš).
 
 ---

@@ -373,7 +373,7 @@ Od 06:00 do konce je BMP180 naprosto klidný: **18.955 °C ± 0.043** (22 bodů 
 
 **Co s tím zbylým −1.09 °C, se z tohohle záznamu rozhodnout nedá.** Může to být vlastní chyba BMP180 (datasheet ±1 °C), chyba teploměru (±0.5 °C), nebo skutečný rozdíl mezi místem krabičky a místem teploměru. Jeden odečet, jeden přístroj, neznámé umístění - viz `reference-thermometer.md`.
 
-> **Opraveno v srpnu 2026** (větev `v2-deep-sleep-fixes`): offset se odečítá jen když je `cold_boot` pravdivé, tedy když boot **není** probuzení ze spánku. Chyba tím spadla na zbytkových −1.09 °C, které tenhle záznam rozhodnout neumí. A vlnovka na to nově sedne - viz bod 7 níž.
+> **Opraveno v srpnu 2026** (větev `v2-deep-sleep-fixes`): offset se odečítá jen když je `cold_boot` pravdivé, tedy když boot **není** probuzení ze spánku. A vlnovka na to nově sedne - viz bod 7 níž. **Ověřeno na železe** v `2026-08-23-cesta-po-oprave/` níž: chyba proti referenci spadla na **−0.90 °C**, tedy blízko předpovězených −1.09. Zbytek je pořád otevřený a tenhle záznam ho rozhodnout neumí.
 
 Prakticky nejhorší na tom bylo, že **se to nijak neoznačilo.** Displej zkouší SCD41 → BMP180 → cache; SCD41 v tomhle režimu stav nikdy nemá (bod 3), takže se vezme BMP180, ten stav **má**, takže `stale` je `false`. A `suspect` je taky `false`, protože po probuzení z deep sleepu není `cold_boot` a nenabíjí se. Vlnovka se tedy neobjeví a v autě je vidět sebevědomé číslo o 3.5 °C vedle.
 
@@ -441,6 +441,87 @@ Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`)
 - **Tlačítko** se za celou noc neobjevilo - všech 71 probuzení je časovaných. **Probuzení tlačítkem tenhle záznam neověřuje.**
 - **CO2 alarm** nemohl sepnout, maximum je 1744 ppm proti prahu 3000. Pořád neověřený.
 
+
+### `2026-08-23-cesta-po-oprave/` - 2.8 h v uspávaném režimu, ověření oprav v2
+
+Protějšek `2026-08-23-cesta-baseline/` výš: **stejný režim, stejná krabička, stejný interval, jen s firmwarem z větve `v2-deep-sleep-fixes`**. Účel je jediný - ověřit na hardwaru čtyři opravy, které se do téhle chvíle opíraly jen o `esphome config`/`compile` a o simulace nad daty. Ruční odečty referenčního teploměru jsou v [`reference-thermometer.md`](2026-08-23-cesta-po-oprave/reference-thermometer.md).
+
+Firmware nahraný v **17:40** lokálně, deep sleep s intervalem **10 min**, HA připojení nechané zapnuté (v menu se to hlásí jako `CUSTOM`, ne `CESTA`). Baterka **odpojená od nabíječky**, start na 3.975 V / 87 %. Krabička byla na začátku **nahřátá od flashování** - během kompilace a nahrávání běžela nepřetržitě na USB - a prvních ~50 min se chladí. Bez zásahu, **16 časovaných probuzení**, tlačítko ani jednou.
+
+Perioda probuzení vyšla **10.41 min** (10.38-10.44), tedy 10 min spánku + ~25 s vzhůru. V každém okně **1 hodnota BMP180, 1 tlak a 4-5 čtení CO2** - přesně to, s čím `send_every: 3` u mediánu počítalo.
+
+#### 1. Offset: chyba spadla z −3.55 na −0.90 °C
+
+Skok při prvním probuzení ze spánku je vidět přímo v datech, protože flash boot je `cold_boot` a ten poslední odečítá:
+
+| | BMP180 |
+|---|---|
+| 17:40:00, flash boot (`cold_boot`, offset se odečítá) | 19.746 |
+| 17:50:00, 1. probuzení ze spánku (offset se neodečítá) | 22.421 |
+| **skok** | **+2.676** |
+
+`REST_OFFSET_BMP180` je 2.46, zbylých **+0.216 °C** je skutečná změna syrového čtení za těch 10 min. Klíčování na `cold_boot` tedy dělá přesně to, co má.
+
+Proti referenčnímu teploměru ve třech srovnatelných bodech: **−0.71 / −1.07 / −0.93 °C, průměr −0.90, sd 0.18**. Kdyby se offset pořád odečítal, vyšlo by z **těch samých** dat −3.36 °C, což sedí na −3.55 změřených v baseline.
+
+**Zbytkových −0.90 °C zůstává otevřených** a je to pořád dvojnásobek deklarované ±0.5 °C. Předpověď specu byla −1.09; tenhle záznam ji potvrzuje v rámci vlastní nejistoty, ale nerozhoduje, čí ta chyba je - proč, je v `reference-thermometer.md`.
+
+#### 2. Procenta baterky: 0 `unknown` proti 22 předtím
+
+| | řádků `battery_level` | z toho `unknown` |
+|---|---|---|
+| baseline (před opravou) | 64 | **22** |
+| tenhle záznam | 12 | **0** |
+
+Závod mezi `battery_level` a `battery_voltage` byl v tom, že ESPHome startuje interval každé komponenty s vlastním náhodným posunem, takže šablona občas počítala procenta z napětí, které ještě neexistovalo. Publikování procent přímo z lambdy `battery_voltage` ten závod odstraňuje **z definice** - a data to potvrzují: ani jedno `unknown` za 16 probuzení.
+
+12 řádků na 16 probuzení není výpadek, a dá se to z dat dokázat. Ostatní senzory mají při **každém** připojení řádek `unknown` (BMP180, tlak i CO2 - ESPHome hlásí NaN, dokud v tom bootu nic nepublikovaly), zatímco `battery_voltage` ani `battery_level` **nemají ten řádek ani jednou**. Napětí tedy stihlo publikovat před připojením ve všech 16 probuzeních. A těch pět chybějících řádků jsou právě probuzení, kde CO2 a teplota data mají, takže zařízení připojené bylo. Zbývá jediné vysvětlení: hodnota vyšla **bit-identicky** jako minule a HA zapisuje jen změny (viz Formát nahoře). Což je přesně podpis mediánu ze tří - ten vrací jeden ze tří skutečných vzorků, takže se opakovat může. Syrové ADC s šesti desetinnými místy by se netrefilo.
+
+Hodnoty klesají hladce, **87.05 → 86.38 %** za 2 h 46 min. Žádný skok zpátky nahoru na "čerstvou" hodnotu, tedy `batt_v_hist1/2` opravdu přežily spánek.
+
+#### 3. Medián přes probuzení: žádný výkyv za 16 probuzení
+
+Kvůli tomuhle celá perzistence globálů je. V baseline prošel filtrem výkyv **−0.886 °C**, protože `median` se po každém probuzení rozjížděl od nuly a byl no-op. Tady:
+
+| | baseline | po opravě |
+|---|---|---|
+| největší skok BMP180 mezi probuzeními | −0.886 °C | **−0.092 °C** |
+| sd kroku napětí mezi probuzeními | 8.02 mV | **1.45 mV** |
+
+Šestnáct hodnot BMP180 tvoří **monotónně klesající řadu** 22.421 → 21.959, bez jediné výjimky. Tlak stejně tak: 968.14-968.31 hPa, sd 0.054, největší skok 0.17.
+
+Spec předpovídal sd kroku 2.16 mV; naměřeno 1.45. Lineární fit napětí přes 11 bodů má **rezidua sd 0.91 mV** proti 6.8 mV v baseline. Ta dvě čísla nejsou úplně souměřitelná (kratší úsek, míň bodů, plošší část křivky), ale řád i směr sedí.
+
+#### 4. Detekce nabíjení: 0 falešných sepnutí, 8× rezerva na prahu
+
+Nabíječka připojená nebyla, takže je to **negativní test** - a ten je pro tuhle opravu ten důležitější, protože falešné sepnutí by trvale označilo správné hodnoty za nedůvěryhodné.
+
+Jedenáct kroků napětí mezi probuzeními: `+2.5 −3.3 −1.1 −0.2 −0.2 −0.3 −0.7 −0.7 −0.7 −0.1 −2.5` mV. Největší kladný je **+2.45 mV** proti prahu **+20 mV**, tedy **8× rezerva**. `Charging` zůstalo `off` a `Charging Duration` na `0.0` po celý záznam.
+
+**Že příznak sepne, když se nabíječka připojí, tenhle záznam neověřuje.** To zůstává otevřené.
+
+#### 5. Čítače běží o 4 % pomaleji, než ukazují
+
+Vedlejší nález, který za zápis stojí. Skutečná perioda je **10.41 min**, ale `charge_minutes` i `disturb_minutes` přičítají `sleep_interval_minutes`, tedy rovných 10. Okno vlnovky nastavené na 150 min čítače tedy ve skutečnosti trvá **~156 min**. Chyba je jedním směrem (okno je delší, ne kratší) a proti 150 min je to šum - nemá cenu to opravovat, ale je dobré to vědět, než se z těch čítačů začne něco počítat.
+
+#### Ostatní veličiny
+
+- **Teplota a vlhkost ze SCD41**: za celý záznam **0 platných hodnot**, obojí `unknown` od začátku do konce. Je to `SCD41_SETTLE_MS = 3 min` proti 25 s vzhůru, přesně jak to popisuje baseline (bod 3) a komentář v `packages/sensors.yaml`. **Tohle oprava neřešila a je to teď největší zbylá díra v uspávaném režimu** - jediný zdroj teploty tam je BMP180.
+- **CO2** publikováno ve všech 16 probuzeních, 4-5 čtení na okno, 992 → 933 ppm s minimem 848. Bez výpadků, bez nesmyslných skoků. Alarm nemohl sepnout (maximum 992 proti prahu 3000).
+- **Vlnovka** je vidět jen na displeji a displej při časovaném probuzení nesvítí. Tlačítko zmáčknuté nebylo, takže **tenhle záznam vlnovku neověřuje** ani v jednom směru.
+- **Vybíjení** vyšlo na −0.0028 V/h (fit, rezidua 0.91 mV). Proti −0.0076 V/h z baseline to **není srovnatelné**: jiný úsek vybíjecí křivky (3.97 V proti 4.15 → 4.00), 2.6 h proti 10 h, a baseline měl v sobě kus relaxace po nabíjení. Na výdrž z toho nic nevyvozuj.
+
+#### Co záznam ověřil a co ne
+
+| test | výsledek |
+|---|---|
+| offset se ve spánku neodečítá | **ověřeno** - skok +2.676 °C při 1. probuzení |
+| chyba teploty proti referenci | **ověřeno** - −0.90 proti −3.55 (zbytek otevřený) |
+| `battery_level` nepadá do `unknown` | **ověřeno** - 0 z 16 |
+| medián přes probuzení funguje | **ověřeno** - žádný výkyv, sd kroku 1.45 mV |
+| nabíjení nesepne falešně | **ověřeno** - 0 z 11 kroků, 8× rezerva |
+| nabíjení sepne s nabíječkou | **neověřeno** - nabíječka nebyla připojená |
+| vlnovka se chová podle okna | **neověřeno** - tlačítko nezmáčknuté |
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -453,4 +534,9 @@ Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`)
 - ~~CESTA transient test~~ **HOTOVO**, viz `2026-08-22-cesta-wake-cycles/` výš - skok se opakuje při každém probuzení a je ~5.5 °C.
 - ~~Teploty při nabíjení~~ **HOTOVO**, dvakrát: `2026-08-22-charging-from-empty/` (+3.7 °C) a `2026-08-23-charging-warm/` (+2.35 °C). `CHARGE_OFFSET_*` zůstávají `0.0` **záměrně** - ty dva záznamy dokazují, že konstanta neexistuje.
 - **Napětí děliče multimetrem** - dnes je násobič 3.2 ověřený v jediném bodě (4.15 V). Chce to odečty kolem 3.5 a 3.8 V. Zároveň to rozhodne, jestli plná baterka opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje.
-- ~~CESTA baseline~~ **HOTOVO**, viz `2026-08-23-cesta-baseline/` výš - předpověď seděla: v uspávaném režimu se odečítá offset, který tam není, a teplota vychází **3.55 °C pod realitou**. Otevřené zůstává zbytkových −1.09 °C proti syrovému čtení - na to je potřeba **tři odečty po pěti minutách** stejně jako u `rest-offset`, ne jeden.
+- ~~CESTA baseline~~ **HOTOVO**, viz `2026-08-23-cesta-baseline/` výš - předpověď seděla: v uspávaném režimu se odečítal offset, který tam není, a teplota vycházela **3.55 °C pod realitou**. Opraveno a ověřeno na hardwaru, viz `2026-08-23-cesta-po-oprave/`.
+- ~~Ověření oprav v2 na hardwaru~~ **ČÁSTEČNĚ**, viz `2026-08-23-cesta-po-oprave/` výš - offset, procenta baterky, medián přes probuzení i absence falešného nabíjení sedí. Dvě věci ten záznam neověřil a zůstávají otevřené (níž).
+- **Teplota v uspávaném režimu proti referenci pořádně** - zbytkových **−0.90 °C** je dvojnásobek deklarované ±0.5 °C a tři odečty rozházené přes 2 h to nerozhodnou. Potřeba **tři odečty po pěti minutách** na konci aspoň tříhodinového běhu, stejný protokol jako u `rest-offset`, a **zapsat, který teploměr to je**.
+- **Sepnutí nabíjení v uspávaném režimu** - `2026-08-23-cesta-po-oprave/` dokazuje jen to, že příznak nesepne sám od sebe (0 z 11 kroků, 8× rezerva na prahu). Že sepne, když se nabíječka opravdu připojí, ověřené není. Stačí na to ~30 min v tom režimu s nabíječkou; příznak má chytnout do dvou probuzení.
+- **Vlnovka na displeji** - je vidět jen na displeji a ten při časovaném probuzení nesvítí, takže se to musí odečítat ručně s tlačítkem. Dvě věci: na nahřáté krabičce má do ~2.5 h po zapnutí uspávání **být** a pak zmizet, na studené **nebýt** vůbec.
+- **Teplota a vlhkost ze SCD41 v uspávaném režimu** - obojí je tam trvale `unknown`, protože `SCD41_SETTLE_MS` je 3 min proti ~25 s vzhůru. Dnes je to vědomé a zdokumentované, ale znamená to, že jediný zdroj teploty v CESTA je BMP180. Jestli se s tím má něco dělat, není rozhodnuté.
