@@ -150,10 +150,18 @@ První verze vázala vlnovku na časovač od přepnutí režimu a nechávala nab
 
 Zavádí se jeden čítač `disturb_minutes`, který znamená „jak dlouho je krabička tepelně v klidu", a nuluje ho **cokoliv, co ji rozladí**:
 
-- zapnutí uspávacího režimu v menu (krabička přichází horká z nepřetržitého běhu);
+- **vstup do spánku**, podle toho, jak dlouho zařízení do té chvíle běželo v kuse;
 - **každý krok napětí nad `CHARGE_STEP_V`** podle 4.4 - tedy ne jen okamžik sepnutí, ale každé další stoupnutí i během už běžícího nabíjení, takže se čítač po celou CC fázi drží na nule.
 
-Čítač tiká jen v probuzeních ze spánku (`!cold_boot`); v DOMA se nepoužívá, protože tam `is_charging` pokrývá nabíjení sám.
+První bod se **opravil proti první verzi návrhu**, která ho vázala na přepnutí režimu v menu. To je špatný okamžik: nejčastější cesta do CESTA je zapnout krabičku vypínačem v autě a hned přepnout režim - krabička je v tu chvíli studená a vlnovka by svítila 2.5 h zbytečně, a to zrovna v tom nejběžnějším případě. Rozhodovat se má podle toho, jestli se krabička **stihla ohřát**:
+
+```cpp
+id(disturb_minutes) = (millis() < 5 min) ? COOLDOWN_MIN : 0.0f;
+```
+
+Zařízení, které jde spát do pěti minut od bootu, se ohřát nestihlo a značí se jako ustálené. Cokoliv delšího se bere jako rozladěné. Je to schod, ne rampa, a záměrně chybuje směrem k označení: prahu pět minut proti τ ≈ 45 min odpovídá ohřátí pod 0.2 °C.
+
+Čítač tiká jen v probuzeních ze spánku (`!cold_boot`); v DOMA se nepoužívá, protože tam `is_charging` pokrývá nabíjení sám. Jakmile dosáhne `COOLDOWN_MIN`, přestane se zvyšovat - tím se zároveň zastaví zápisy do flash.
 
 `suspect` v `display.yaml` dostane třetí podmínku:
 
