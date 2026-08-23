@@ -521,138 +521,211 @@ sensor:
       id(batt_v_hist2) = id(batt_v_hist1);
       id(batt_v_hist1) = raw_v;
 
-      // --- Charging detection from a slow voltage trend ---
-      // A single-sample delta was tried first and missed real charging
-      // entirely (real rise is only ~0.004V/min, well under any threshold
-      // that also needs to reject WiFi-TX voltage sag noise). Instead:
-      // track a slow moving average (~10min time constant, alpha=0.1) as
-      // baseline; trend = current voltage minus that baseline. During real
-      // charging the baseline lags the rising voltage enough to keep trend
-      // reliably above threshold; a momentary noise spike barely moves the
-      // baseline, so trend falls back quickly - combined with requiring 3
-      // consecutive confirmations, that rejects noise-driven false
-      // positives.
-      if (id(prev_batt_v) > 0.0f) {
-        if (id(batt_v_slow_avg) <= 0.0f) {
-          id(batt_v_slow_avg) = v;
-        }
-        float trend = v - id(batt_v_slow_avg);
-        id(batt_v_slow_avg) = id(batt_v_slow_avg) + 0.1f * (v - id(batt_v_slow_avg));
+      // Two regimes, two rules, because the sampling differs by an order of
+      // magnitude.
+      //
+      // Running continuously (cold_boot): one reading every 60s, and the
+      // per-sample charging signal is only ~+4mV against ~18mV of noise -
+      // hopeless on its own, which is why the path below averages against a
+      // ~10min EWMA baseline. That path is verified against two real charge
+      // captures and is NOT touched here.
+      //
+      // Woken from deep sleep (!cold_boot): one reading per wake, and the
+      // ~10min of averaging comes free in the gap between them. A charge adds
+      // ~+40mV per 10min step while discharge takes off ~1.3mV, and the
+      // median leaves 2.16mV of noise - so a plain step against the previous
+      // wake beats the EWMA and needs no confirmation count to latch.
+      //
+      // It also side-steps the end-of-charge problem entirely. The EWMA has a
+      // dead zone (constant voltage -> trend 0, which sits between the latch
+      // and release thresholds), and closing it took the FULL_V/flatness
+      // heuristic and two rounds of tuning. A step rule has no dead zone:
+      // constant voltage gives step 0, which is below the release threshold.
+      if (!id(cold_boot)) {
+        // Swept against both charge captures down-sampled to 10min, with the
+        // overnight record as the regression - see data/threshold-sweep.py.
+        //   latch:   identical results anywhere from +12 to +30mV, and zero
+        //            false latches across 72 undisturbed wakes even at +10mV,
+        //            so +20mV sits in the middle of a wide plateau.
+        //   release: +5mV oscillates (ON->OFF->ON inside 20min) because the
+        //            CV phase of a charge is flat; "< 0" does not.
+        //   confirm: 2 releases 58min early, 3 lands within 2min of the
+        //            measured end of charge, 4 runs past the capture. 3 is
+        //            the one we can evidence, and later is the safe direction.
+        const float CHARGE_STEP_V   = 0.020f;
+        const int   RELEASE_CONFIRM = 3;
 
-        bool was_charging = id(is_charging);
+        // A wake is ~26s and this sensor polls at 60s, so it normally fires
+        // once. A button wake or STAY can keep the device up longer and fire
+        // it twice - the per-wake counters must not advance twice.
+        if (!id(batt_reading_counted)) {
+          id(batt_reading_counted) = true;
+          float mins = (float) id(sleep_interval_minutes);
 
-        if (!was_charging) {
-          if (trend > 0.015f) {
-            id(charge_confirm_count)++;
-          } else {
-            id(charge_confirm_count) = 0;
+          if (id(last_wake_batt_v) > 0.0f) {
+            float step = v - id(last_wake_batt_v);
+            if (step > CHARGE_STEP_V) {
+              if (!id(is_charging)) {
+                id(is_charging) = true;
+                id(charge_minutes) = 0.0f;
+              }
+              id(discharge_confirm_count) = 0;
+              // Every rise, not just the latching one, so the "~" marker
+              // stays pinned for the whole constant-current phase.
+              id(disturb_minutes) = 0.0f;
+            } else if (id(is_charging)) {
+              if (step < 0.0f) {
+                id(discharge_confirm_count)++;
+                if (id(discharge_confirm_count) >= RELEASE_CONFIRM) {
+                  id(is_charging) = false;
+                  id(discharge_confirm_count) = 0;
+                }
+              } else {
+                id(discharge_confirm_count) = 0;
+              }
+            }
           }
-          if (id(charge_confirm_count) >= 3) {
-            id(is_charging) = true;
-            id(charge_start_ms) = millis();
-            id(charge_confirm_count) = 0;
-            id(discharge_confirm_count) = 0;
-            id(full_confirm_count) = 0;
-          }
-        } else {
-          if (trend < -0.01f) {
-            id(discharge_confirm_count)++;
-          } else {
-            id(discharge_confirm_count) = 0;
-          }
-          if (id(discharge_confirm_count) >= 3) {
-            id(is_charging) = false;
-            id(discharge_confirm_count) = 0;
-            id(charge_confirm_count) = 0;
-            id(full_confirm_count) = 0;
-          }
+          id(last_wake_batt_v) = v;
 
-          // --- End of charge: "high and flat" ---
-          // The trend rule above cannot see a finished charge. Once the
-          // TP4056 is done the voltage stops climbing and then sags by only
-          // ~0.0009 V/min - two orders of magnitude short of the -0.01
-          // threshold, so it never trips and the flag used to hang around
-          // until the 3h safety net below finally cleared it. Measured in
-          // data/2026-08-22-charging-from-empty/: charging actually
-          // finished around 18:10 (voltage topped out at 4.150 and began
-          // drifting down), but `Charging` stayed on until 19:25 - exactly
-          // 3h00m03s after it latched, i.e. the safety net, not detection.
-          //
-          // So watch for the other signature instead: a voltage that is
-          // both high AND has stopped moving. A battery still in the
-          // constant-current phase climbs ~0.004 V per 60s reading; a
-          // finished one moves less than 0.001.
-          //
-          // The thresholds are swept against real captures rather than
-          // picked by feel. The first attempt used only the charge-from-
-          // empty capture and landed on 4.10 / 0.001 / 5, which fires
-          // there at 18:19. A second capture
-          // (data/2026-08-23-charging-warm/, charger plugged in at ~64%
-          // with the box already at room temperature) showed that tuning
-          // is worthless: that battery tops out at 4.083 V measured, so
-          // `v >= 4.10` is never true after the charge finishes and the
-          // rule NEVER fires. The old numbers had been fitted to one
-          // battery state, not to the hardware.
-          //
-          // Two things separate a finished charge from a running one, and
-          // only one of them generalises:
-          //
-          //   - Flatness DOES. A battery in constant-current climbs
-          //     ~0.004 V per 60s reading; a finished one moves less than
-          //     0.002. True in both captures.
-          //   - The absolute level does NOT. The two captures plateau at
-          //     4.120 V and 4.083 V - 37 mV apart on the same hardware.
-          //     Anything tuned tightly to one of them breaks on the other.
-          //
-          // So FULL_V is demoted to a loose guard (only there so a charge
-          // stalled at 3.5 V can't be read as finished) and flatness does
-          // the discriminating. Swept over both captures:
-          //
-          //   FULL_V     4.00-4.08 all identical; 4.09+ never fires on
-          //              the warm capture. 4.05 keeps ~30 mV of margin
-          //              below the lower of the two plateaus.
-          //   DELTA      0.002 needed - the warm plateau has 60s steps up
-          //              to 0.0019 V, so 0.001 rejects it as "still
-          //              moving" and never confirms.
-          //   CONFIRM    4..10 all land in the right window (empty
-          //              18:18-18:26, warm 01:06-01:13). Only 3 is too
-          //              eager, firing at 17:52 while still climbing.
-          //
-          // Result: fires at 4.151 V / +125 min on the empty charge and
-          // 4.085 V / +48 min on the warm one. Both correct.
-          //
-          // If the thresholds are ever too tight for a noisier battery the
-          // rule simply never fires and the 3h backstop below takes over -
-          // degraded, not broken.
-          const float FULL_V          = 4.05f;
-          const float FULL_FLAT_DELTA = 0.002f;
-          const int   FULL_CONFIRM    = 5;
-
-          float step = v - id(prev_batt_v);
-          if (step < 0.0f) step = -step;
-          if (v >= FULL_V && step < FULL_FLAT_DELTA) {
-            id(full_confirm_count)++;
-          } else {
-            id(full_confirm_count) = 0;
-          }
-          if (id(full_confirm_count) >= FULL_CONFIRM) {
-            id(is_charging) = false;
-            id(full_confirm_count) = 0;
-            id(discharge_confirm_count) = 0;
-            id(charge_confirm_count) = 0;
-          }
+          if (id(is_charging)) id(charge_minutes) += mins;
+          // Stops at the cap, which also stops it writing to flash.
+          if (id(disturb_minutes) < (float) ${cooldown_min}) id(disturb_minutes) += mins;
         }
       } else {
-        id(batt_v_slow_avg) = v;
-      }
-      // Last-resort backstop, now that both a real disconnect (the trend
-      // rule) and a finished charge (high and flat) are detected above.
-      // Nothing known should reach this any more - if `Charging Duration`
-      // ever shows a clean 180.0min again, one of those two rules missed
-      // something and this is covering for it.
-      if (id(is_charging) && (millis() - id(charge_start_ms) > 3UL * 60UL * 60UL * 1000UL)) {
-        id(is_charging) = false;
-      }
+        // --- Charging detection from a slow voltage trend ---
+        // A single-sample delta was tried first and missed real charging
+        // entirely (real rise is only ~0.004V/min, well under any threshold
+        // that also needs to reject WiFi-TX voltage sag noise). Instead:
+        // track a slow moving average (~10min time constant, alpha=0.1) as
+        // baseline; trend = current voltage minus that baseline. During real
+        // charging the baseline lags the rising voltage enough to keep trend
+        // reliably above threshold; a momentary noise spike barely moves the
+        // baseline, so trend falls back quickly - combined with requiring 3
+        // consecutive confirmations, that rejects noise-driven false
+        // positives.
+        if (id(prev_batt_v) > 0.0f) {
+          if (id(batt_v_slow_avg) <= 0.0f) {
+            id(batt_v_slow_avg) = v;
+          }
+          float trend = v - id(batt_v_slow_avg);
+          id(batt_v_slow_avg) = id(batt_v_slow_avg) + 0.1f * (v - id(batt_v_slow_avg));
+
+          bool was_charging = id(is_charging);
+
+          if (!was_charging) {
+            if (trend > 0.015f) {
+              id(charge_confirm_count)++;
+            } else {
+              id(charge_confirm_count) = 0;
+            }
+            if (id(charge_confirm_count) >= 3) {
+              id(is_charging) = true;
+              id(charge_start_ms) = millis();
+              id(charge_confirm_count) = 0;
+              id(discharge_confirm_count) = 0;
+              id(full_confirm_count) = 0;
+            }
+          } else {
+            if (trend < -0.01f) {
+              id(discharge_confirm_count)++;
+            } else {
+              id(discharge_confirm_count) = 0;
+            }
+            if (id(discharge_confirm_count) >= 3) {
+              id(is_charging) = false;
+              id(discharge_confirm_count) = 0;
+              id(charge_confirm_count) = 0;
+              id(full_confirm_count) = 0;
+            }
+
+            // --- End of charge: "high and flat" ---
+            // The trend rule above cannot see a finished charge. Once the
+            // TP4056 is done the voltage stops climbing and then sags by only
+            // ~0.0009 V/min - two orders of magnitude short of the -0.01
+            // threshold, so it never trips and the flag used to hang around
+            // until the 3h safety net below finally cleared it. Measured in
+            // data/2026-08-22-charging-from-empty/: charging actually
+            // finished around 18:10 (voltage topped out at 4.150 and began
+            // drifting down), but `Charging` stayed on until 19:25 - exactly
+            // 3h00m03s after it latched, i.e. the safety net, not detection.
+            //
+            // So watch for the other signature instead: a voltage that is
+            // both high AND has stopped moving. A battery still in the
+            // constant-current phase climbs ~0.004 V per 60s reading; a
+            // finished one moves less than 0.001.
+            //
+            // The thresholds are swept against real captures rather than
+            // picked by feel. The first attempt used only the charge-from-
+            // empty capture and landed on 4.10 / 0.001 / 5, which fires
+            // there at 18:19. A second capture
+            // (data/2026-08-23-charging-warm/, charger plugged in at ~64%
+            // with the box already at room temperature) showed that tuning
+            // is worthless: that battery tops out at 4.083 V measured, so
+            // `v >= 4.10` is never true after the charge finishes and the
+            // rule NEVER fires. The old numbers had been fitted to one
+            // battery state, not to the hardware.
+            //
+            // Two things separate a finished charge from a running one, and
+            // only one of them generalises:
+            //
+            //   - Flatness DOES. A battery in constant-current climbs
+            //     ~0.004 V per 60s reading; a finished one moves less than
+            //     0.002. True in both captures.
+            //   - The absolute level does NOT. The two captures plateau at
+            //     4.120 V and 4.083 V - 37 mV apart on the same hardware.
+            //     Anything tuned tightly to one of them breaks on the other.
+            //
+            // So FULL_V is demoted to a loose guard (only there so a charge
+            // stalled at 3.5 V can't be read as finished) and flatness does
+            // the discriminating. Swept over both captures:
+            //
+            //   FULL_V     4.00-4.08 all identical; 4.09+ never fires on
+            //              the warm capture. 4.05 keeps ~30 mV of margin
+            //              below the lower of the two plateaus.
+            //   DELTA      0.002 needed - the warm plateau has 60s steps up
+            //              to 0.0019 V, so 0.001 rejects it as "still
+            //              moving" and never confirms.
+            //   CONFIRM    4..10 all land in the right window (empty
+            //              18:18-18:26, warm 01:06-01:13). Only 3 is too
+            //              eager, firing at 17:52 while still climbing.
+            //
+            // Result: fires at 4.151 V / +125 min on the empty charge and
+            // 4.085 V / +48 min on the warm one. Both correct.
+            //
+            // If the thresholds are ever too tight for a noisier battery the
+            // rule simply never fires and the 3h backstop below takes over -
+            // degraded, not broken.
+            const float FULL_V          = 4.05f;
+            const float FULL_FLAT_DELTA = 0.002f;
+            const int   FULL_CONFIRM    = 5;
+
+            float step = v - id(prev_batt_v);
+            if (step < 0.0f) step = -step;
+            if (v >= FULL_V && step < FULL_FLAT_DELTA) {
+              id(full_confirm_count)++;
+            } else {
+              id(full_confirm_count) = 0;
+            }
+            if (id(full_confirm_count) >= FULL_CONFIRM) {
+              id(is_charging) = false;
+              id(full_confirm_count) = 0;
+              id(discharge_confirm_count) = 0;
+              id(charge_confirm_count) = 0;
+            }
+          }
+        } else {
+          id(batt_v_slow_avg) = v;
+        }
+        // Last-resort backstop, now that both a real disconnect (the trend
+        // rule) and a finished charge (high and flat) are detected above.
+        // Nothing known should reach this any more - if `Charging Duration`
+        // ever shows a clean 180.0min again, one of those two rules missed
+        // something and this is covering for it.
+        if (id(is_charging) && (millis() - id(charge_start_ms) > 3UL * 60UL * 60UL * 1000UL)) {
+          id(is_charging) = false;
+        }
+      }  // end of the continuous-run path
+
       id(prev_batt_v) = v;
       id(cached_battery_v) = v;
       return v;
@@ -713,6 +786,11 @@ sensor:
     update_interval: 60s
     lambda: |-
       if (!id(is_charging)) return 0.0f;
+      // millis() restarts on every deep-sleep wake, so charge_start_ms can
+      // only measure a charge that fits inside one boot. In deep-sleep modes
+      // the battery lambda accumulates whole sleep intervals into
+      // charge_minutes instead - see the "!cold_boot" branch there.
+      if (!id(cold_boot)) return id(charge_minutes);
       return (millis() - id(charge_start_ms)) / 60000.0f;
 
 binary_sensor:
