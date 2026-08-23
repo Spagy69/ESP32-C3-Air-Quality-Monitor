@@ -41,13 +41,24 @@ globals:
   # Previous 2 raw voltage readings, used to median-of-3 each new reading
   # before it ever reaches the trend/confirm-count logic below - see the
   # battery_voltage lambda comment for the real bug this fixes.
+  # Class B: must survive deep sleep, must NOT survive a power cycle.
+  # See the invalidation block in air-quality-monitor.yaml's on_boot.
+  #
+  # These used to be class C, which quietly disabled the median in every
+  # deep-sleep mode: a wake lasts ~26s and battery_voltage polls at 60s, so
+  # exactly one reading arrives and `batt_v_hist2 > 0` was never true - the
+  # code fell straight through to the raw sample. Measured over 59 cycles of
+  # data/2026-08-23-cesta-baseline/: raw wake-to-wake steps have sd 8.02mV
+  # and a worst false positive of +21.6mV, while the same steps through the
+  # median have sd 2.16mV and a worst false positive of +0.96mV. The charging
+  # rule in sensors.yaml needs the second set of numbers to work at all.
   - id: batt_v_hist1
     type: float
-    restore_value: false
+    restore_value: true
     initial_value: '0'
   - id: batt_v_hist2
     type: float
-    restore_value: false
+    restore_value: true
     initial_value: '0'
   - id: prev_batt_v
     type: float
@@ -57,9 +68,11 @@ globals:
     type: float
     restore_value: false
     initial_value: '0'
+  # Class B - the charging flag has to survive the reboot that every wake
+  # is, or the deep-sleep detection path can never latch across cycles.
   - id: is_charging
     type: bool
-    restore_value: false
+    restore_value: true
     initial_value: 'false'
   - id: charge_start_ms
     type: uint32_t
@@ -69,9 +82,11 @@ globals:
     type: int
     restore_value: false
     initial_value: '0'
+  # Class B - in the deep-sleep path this counts wakes, not readings
+  # (3 confirmations = 3 wakes = 30min), so it must cross reboots.
   - id: discharge_confirm_count
     type: int
-    restore_value: false
+    restore_value: true
     initial_value: '0'
   # Counts consecutive readings that look like a finished charge (high and
   # no longer moving) - the signature the trend rule above can't see. See
@@ -80,6 +95,38 @@ globals:
     type: int
     restore_value: false
     initial_value: '0'
+
+  # --- deep-sleep-only bookkeeping (class B unless noted) ---
+  # Median-filtered voltage as of the previous wake. The deep-sleep charging
+  # rule is a step against this, not a trend against a moving average: at one
+  # sample per 10min a charge adds ~+40mV per step while discharge takes off
+  # ~1.3mV, and the median keeps the noise at 2.16mV sd.
+  - id: last_wake_batt_v
+    type: float
+    restore_value: true
+    initial_value: '0'
+  # Minutes of charging accumulated across wakes. millis() restarts on every
+  # wake, so charge_start_ms cannot measure a charge that spans sleeps.
+  - id: charge_minutes
+    type: float
+    restore_value: true
+    initial_value: '0'
+  # Minutes since the enclosure was last thermally disturbed - entering sleep
+  # warm, or any detected charging step. Drives the "~" marker in deep-sleep
+  # modes (packages/display.yaml). Stops incrementing once it reaches
+  # ${cooldown_min}, which also stops it writing to flash.
+  - id: disturb_minutes
+    type: float
+    restore_value: true
+    initial_value: '${cooldown_min}'
+  # Class C. True once battery_voltage has published in THIS boot. A wake is
+  # normally ~26s so the 60s poll fires once, but a button wake or STAY can
+  # keep the device up longer and fire it twice - the per-wake counters must
+  # not be advanced twice.
+  - id: batt_reading_counted
+    type: bool
+    restore_value: false
+    initial_value: 'false'
 
   # --- temperature/humidity correction bookkeeping ---
   - id: temp_raw_scd41

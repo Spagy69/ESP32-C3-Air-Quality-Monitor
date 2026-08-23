@@ -1,6 +1,16 @@
 substitutions:
   device_name: "air-quality-monitor"
   friendly_name: "Air Quality Monitor"
+  # How long after a thermal disturbance the temperature stays marked "~" in
+  # deep-sleep modes. Referenced from packages/globals.yaml, sensors.yaml,
+  # display.yaml and menu.yaml, so it lives here rather than as four copies
+  # of a literal.
+  #
+  # 144min is where the measured cool-down curve
+  # (data/2026-08-23-cesta-baseline/) drops below 0.5C of its plateau, and
+  # 0.5C is the accuracy the whole device claims - below that the reading is
+  # as trustworthy as it ever gets. Rounded up to 150.
+  cooldown_min: "150"
 
 esphome:
   name: ${device_name}
@@ -20,6 +30,33 @@ esphome:
             auto cause = esp_sleep_get_wakeup_cause();
             id(cold_boot)      = (cause == ESP_SLEEP_WAKEUP_UNDEFINED);
             id(wake_was_timer) = (cause == ESP_SLEEP_WAKEUP_TIMER);
+        # Class-B state must survive deep sleep but NOT a power cycle.
+        # ESPHome only offers flash-backed globals (restore_value: true),
+        # which survive both, so the second half is enforced here: any boot
+        # that is not a deep-sleep wake throws the sleep-scoped state away.
+        #
+        # Without this, `is_charging` would come back true after a week on
+        # the shelf, and a stale `last_wake_batt_v` would look like a huge
+        # voltage step and latch charging on the very first reading.
+        #
+        # cold_boot is also true after an OTA reboot, so this clears there
+        # too. That is the safe direction - re-deriving beats trusting a
+        # flag from before the reboot.
+        #
+        # disturb_minutes is reset to "settled", not to zero: a device that
+        # just powered on has a cold enclosure and marking it would be
+        # wrong. Its real value is set when the device actually enters
+        # sleep - see packages/menu.yaml.
+        - lambda: |-
+            if (id(cold_boot)) {
+              id(batt_v_hist1) = 0.0f;
+              id(batt_v_hist2) = 0.0f;
+              id(last_wake_batt_v) = 0.0f;
+              id(is_charging) = false;
+              id(discharge_confirm_count) = 0;
+              id(charge_minutes) = 0.0f;
+              id(disturb_minutes) = (float) ${cooldown_min};
+            }
         - delay: 1500ms
     - priority: -100
       then:
