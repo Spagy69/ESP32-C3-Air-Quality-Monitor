@@ -320,7 +320,19 @@ sensor:
 
   - platform: bmp085
     address: 0x77
-    update_interval: 60s
+    # 5s, matching the SCD41 above, so the median filters below actually have
+    # a window to fill. At 60s a deep-sleep wake (~26s) delivered exactly one
+    # reading, the window never filled, and with send_first_at: 1 the filter
+    # published that single raw sample - i.e. it was a no-op in the mode that
+    # needs it most. Proven in data/2026-08-23-cesta-baseline/: a -0.886C
+    # outlier went straight through at 14:43:48 local.
+    #
+    # At 5s a wake delivers ~5 readings and the median works inside one boot,
+    # so none of this needs flash-backed state.
+    #
+    # Costs nothing: a BMP180 conversion is ~5uA*s, so 0.2 readings/s averages
+    # ~1uA against ~34mA for the whole device.
+    update_interval: 5s
     temperature:
       name: "Temperature (BMP180)"
       id: temp_bmp180
@@ -346,13 +358,21 @@ sensor:
         # of the code reads something else is exactly the split-brain bug
         # that broke charging detection once already (see battery_voltage).
         #
-        # send_every: 1 is required - the default is 5, which would publish
-        # only every fifth reading. Cost is up to ~2min of lag at the 60s
-        # poll rate, which is nothing for room temperature/pressure.
+        # send_every/send_first_at both 3, which is the only way ESPHome will
+        # let us wait for a full window: it rejects send_first_at > send_every.
+        #
+        # Why wait at all: with send_first_at: 1 the first readings of every
+        # boot are published as the median of a partial window, i.e. raw. In a
+        # ~26s deep-sleep wake that would be most of them, which is exactly
+        # the case this filter exists for.
+        #
+        # At the 5s poll above this publishes one fully filtered value ~13-15s
+        # into each wake - comfortably inside the ~26s window (CO2 shows the
+        # API is connected by ~4s), and every 15s while running continuously.
         - median:
             window_size: 3
-            send_every: 1
-            send_first_at: 1
+            send_every: 3
+            send_first_at: 3
         - lambda: |-
             const float REST_OFFSET_BMP180   = 2.46f;  // measured, see above
             const float CHARGE_OFFSET_BMP180 = 0.0f;   // measured: no constant works, see SCD41 above
@@ -390,6 +410,13 @@ sensor:
             float corrected = x - extra;
             id(cached_temp_bmp180) = corrected;
             return corrected;
+        # Publish only meaningful changes, same reasoning and same placement
+        # as the SCD41's delta above: at 5s polling this would otherwise put
+        # ~12 rows/min into HA's recorder for a value that drifts by well
+        # under 0.2C an hour. AFTER the lambda on purpose, so the cache still
+        # updates on every reading and the display's fallback cannot go stale
+        # just because HA does not need the row.
+        - delta: 0.05
     pressure:
       name: "Pressure"
       id: pressure_bmp180
@@ -399,11 +426,15 @@ sensor:
         # before-the-lambda placement so the cache stays clean too.
         - median:
             window_size: 3
-            send_every: 1
-            send_first_at: 1
+            send_every: 3
+            send_first_at: 3  # see the temperature median above for why
         - lambda: |-
             id(cached_pressure) = x;
             return x;
+        # Same reasoning as the temperature delta above. 0.1 hPa is well under
+        # any real weather trend and well over the residual noise the median
+        # leaves behind.
+        - delta: 0.1
 
   # Battery voltage via external divider, tap -> GPIO4. 30x oversampled to
   # fight the noise a high-impedance divider picks up (in place of a

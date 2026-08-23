@@ -445,14 +445,11 @@ za:
 ```yaml
         - median:
             window_size: 3
-            send_every: 1
-            # 3, not 1: with send_first_at: 1 the first two readings of every
-            # boot are published as the median of a partial window, i.e. raw.
-            # In a deep-sleep wake that is most of them. Costs ~15s of extra
-            # latency after a boot, during which the display falls back to
-            # the cached value and marks it - the honest trade.
+            send_every: 3
             send_first_at: 3
 ```
+
+**Oprava proti první verzi plánu (nalezeno při provádění):** původně tu stálo `send_every: 1` se `send_first_at: 3`. To ESPHome odmítne - validace vyžaduje `send_first_at <= send_every`, takže „publikuj každé čtení, ale až po naplnění okna" tenhle filtr neumí. Se `send_every: 3` vyjde jedna plně filtrovaná hodnota ~13-15 s do každého probuzení (pohodlně uvnitř ~26s okna, API je podle CO2 připojené kolem 4 s) a každých 15 s za nepřetržitého běhu.
 
 Pozor: identický `median` blok je v souboru **dvakrát** (teplota a tlak). Tenhle krok mění ten v `temperature:`, další krok ten v `pressure:`. Rozliš je podle okolního kontextu, ne slepou náhradou všech výskytů.
 
