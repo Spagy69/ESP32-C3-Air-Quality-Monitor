@@ -373,7 +373,9 @@ Od 06:00 do konce je BMP180 naprosto klidný: **18.955 °C ± 0.043** (22 bodů 
 
 **Co s tím zbylým −1.09 °C, se z tohohle záznamu rozhodnout nedá.** Může to být vlastní chyba BMP180 (datasheet ±1 °C), chyba teploměru (±0.5 °C), nebo skutečný rozdíl mezi místem krabičky a místem teploměru. Jeden odečet, jeden přístroj, neznámé umístění - viz `reference-thermometer.md`.
 
-Prakticky nejhorší na tom je, že **se to nijak neoznačí.** Displej zkouší SCD41 → BMP180 → cache; SCD41 v tomhle režimu stav nikdy nemá (bod 3), takže se vezme BMP180, ten stav **má**, takže `stale` je `false`. A `suspect` je taky `false`, protože po probuzení z deep sleepu není `cold_boot` a nenabíjí se. Vlnovka se tedy neobjeví a v autě je vidět sebevědomé číslo o 3.5 °C vedle.
+> **Opraveno v srpnu 2026** (větev `v2-deep-sleep-fixes`): offset se odečítá jen když je `cold_boot` pravdivé, tedy když boot **není** probuzení ze spánku. Chyba tím spadla na zbytkových −1.09 °C, které tenhle záznam rozhodnout neumí. A vlnovka na to nově sedne - viz bod 7 níž.
+
+Prakticky nejhorší na tom bylo, že **se to nijak neoznačilo.** Displej zkouší SCD41 → BMP180 → cache; SCD41 v tomhle režimu stav nikdy nemá (bod 3), takže se vezme BMP180, ten stav **má**, takže `stale` je `false`. A `suspect` je taky `false`, protože po probuzení z deep sleepu není `cold_boot` a nenabíjí se. Vlnovka se tedy neobjeví a v autě je vidět sebevědomé číslo o 3.5 °C vedle.
 
 #### 3. Ze SCD41 nepřišla za 12 hodin ani jedna teplota nebo vlhkost
 
@@ -385,6 +387,8 @@ Je to **přesně to, co filtr `SCD41_SETTLE_MS = 3 min` má dělat**, a je to i 
 
 Tohle byla otevřená otázka od opravy s `stop_periodic_measurement` (jestli se senzor po zaparkování na spánek zase rozběhne). **Odpověď: ano, ve všech 72 probuzeních**, pokaždé ~5 čtení. Křivka dává smysl jako celek: 1512 ppm v 03:25, minimum **1112 ppm v 04:49**, pak plynulý růst přes celý den až na **1744 ppm v 15:46**. Žádné výpadky, žádné nesmyslné skoky.
 
+Simulace nad tím samým záznamem navíc zavírá otázku, jestli se **armování CO2 alarmu vejde do 30s okna**: pravidlo „3 čtení do 150 ppm" se armovalo ve **všech 72 probuzeních**, pokaždé na 3. čtení, a tříminutový fallback se nepoužil ani jednou. Armující čtení se rovnou vyhodnocuje i proti prahu, takže alarm má šanci sepnout v každém probuzení. Neověřuje to, že alarm skutečně sepne - CO2 nepřesáhlo 1744 ppm proti prahu 3000 - ale že mu v tom nebrání armování.
+
 Drobnost, která z toho vypadla: ve **42 ze 72** probuzení je úplně první řádek CO2 v HA `unknown`, a **0.5-4 s** po něm už přijde reálná hodnota. Je to okamžik připojení - HA si vezme stav entity dřív, než senzor stihl první čtení. Kosmetické (hodnota v tom samém probuzení dorazí), ale zapisuje to do recorderu 42 zbytečných `unknown` řádků.
 
 #### 5. Filtry, které potřebují historii, v uspávaném režimu nedělají nic
@@ -393,13 +397,15 @@ Tohle je zobecnění, na které záznam přivedl jeden konkrétní výkyv: **14:
 
 Důvod: **deep sleep je plný reboot.** Za jedno probuzení stihne BMP180 při `update_interval: 60s` právě **jedno** čtení, a `median` filtr se rozjíždí od nuly. Se `send_first_at: 1` vydá medián z jednovzorkového okna, což je ten vzorek sám. V uspávaném režimu je ten filtr **no-op**.
 
-Stejný mechanismus (ověřeno čtením konfigurace, ne z těchhle dat) se týká i:
+Stejný mechanismus (ověřeno čtením konfigurace, ne z těchhle dat) se týkal i toho, co je níž. **Vše v tomhle výčtu popisuje stav před opravou** - co se s tím udělalo, je v poznámce pod ním:
 
 - **tlaku** - stejný `median` filtr, stejné okno, stejný problém;
 - **`battery_voltage`** - medián ze 3 se počítá v lambdě přes `batt_v_hist1/2`, obojí `restore_value: false`, takže po každém bootu je `batt_v_hist2 == 0` a kód spadne do větve `v = raw_v`;
 - **detekce nabíjení** - `batt_v_slow_avg`, `charge_confirm_count`, `full_confirm_count` i `is_charging` jsou všechny `restore_value: false`. Pomalý klouzavý průměr s časovou konstantou ~10 min dostane za probuzení jeden vzorek a pak se zahodí. **V uspávaném režimu proto `Charging` nemůže sepnout nikdy** - a s ním nefunguje ani vlnovka při nabíjení. V tomhle záznamu se nenabíjelo, takže to není z dat potvrzené ani vyvrácené; z konfigurace to ale plyne jednoznačně.
 
 Napětí to mimochodem nijak neublížilo - rezidua fitu jsou 6.8 mV, čistší než ~18 mV šumu popsaných z DOMA. Ale spoléhat se na filtr, který v daném režimu neběží, je štěstí, ne návrh.
+
+> **Opraveno v srpnu 2026**, každé jinak podle toho, co který senzor potřebuje. BMP180 a tlak čtou po **5 s** místo po 60, takže se okno mediánu naplní uvnitř jednoho probuzení a žádný trvalý stav není potřeba. Historie mediánu napětí a celý stav detekce nabíjení se ukládají do **flash** a v `on_boot` se při studeném bootu nulují - flash totiž přežije i vypnutí, což by u `is_charging` bylo špatně. A detekce nabíjení dostala ve spánku **vlastní pravidlo** přes krok mezi probuzeními, takže `Charging` tam už sepnout může.
 
 #### 6. Procento baterky chybí ve 29 % probuzení
 
@@ -408,6 +414,8 @@ Napětí to mimochodem nijak neublížilo - rezidua fitu jsou 6.8 mV, čistší 
 Mechanismus: obě šablony mají `update_interval: 60s` a ESPHome plánuje první běh intervalu na `now + náhodný offset v [0, 5 s)` (`Scheduler::calculate_interval_offset_`) - **nezávisle pro každou komponentu**. Když padne `battery_level` dřív než `battery_voltage`, projde v lambdě pojistka `if (!id(battery_voltage).has_state()) return {};`, nepublikuje se nic, a protože je zařízení vzhůru jen ~26 s, **druhá šance v tom probuzení nepřijde** (další tik by byl za 60 s). HA při připojení odečte stav jako NaN → `unknown`. Že je to pořadím a ne něčím jiným, je vidět v datech: v takovém probuzení má `battery_voltage` platnou hodnotu už v okamžiku připojení, `battery_level` `unknown`.
 
 Displej tím netrpí (`cached_battery_pct` je flash-backed), postižená je řada v HA.
+
+> **Opraveno v srpnu 2026:** procenta se počítají na konci lambdy `battery_voltage` a publikují přes `publish_state()`; šablona přišla o vlastní tik. Závod tím mizí konstrukcí. Ověřit to jde jedině na železe - plánovač ESPHome se ze stolu nasimulovat nedá.
 
 #### 7. Chladnutí po přepnutí do spánku trvá ~3 h
 
@@ -423,7 +431,9 @@ Vedlejší, ale prakticky užitečné číslo, protože přesně tohle se děje,
 
 Log-fit přes prvních 21 bodů dává **τ ≈ 57 min**, ale jedna exponenciála to není - z prvních bodů vychází τ 28-44 min a postupně roste, což odpovídá dvěma tepelným hmotám (deska a baterka zvlášť). Prakticky: do **0.5 °C** od plató zhruba za **2.5 h**, do 0.25 °C za **3 h**.
 
-Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`) je ~45 min. Chladnutí je tedy podstatně pomalejší než zahřívání - a hlavně **vlnovka ho vůbec nepokrývá**, protože `cold_boot` po probuzení z deep sleepu není nastavené.
+Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`) je ~45 min. Chladnutí je tedy podstatně pomalejší než zahřívání.
+
+> **Opraveno v srpnu 2026:** z tohohle fitu vyšel práh okna, po které displej drží vlnovku - **150 min**, což je 144 min (kdy chyba klesne pod deklarovanou přesnost ±0.5 °C) zaokrouhlených nahoru. Okno se nuluje při vstupu do spánku, pokud zařízení do té chvíle běželo dýl než 5 min, a při každém stoupnutí napětí nad prahem nabíjení.
 
 #### Ostatní veličiny
 
