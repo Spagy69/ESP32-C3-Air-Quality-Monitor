@@ -327,6 +327,110 @@ Otevřené zůstává, jestli článek opravdu končí na 4.12 V, nebo jestli d�
 - **CO2** 1342 → 1247 (00:46) → 1318. Doznívání dýchacího testu a pak normální nárůst v zavřené místnosti.
 - **Tlak** 966.2-966.6 hPa přes celou hodinu, žádný výstřel - median-of-3 dělá svoje.
 
+### `2026-08-23-cesta-baseline/` - 12.4 h přes noc v uspávaném režimu, s referenčním teploměrem
+
+Přesně ten záznam, který si předchozí verze tohohle souboru přála pod názvem "CESTA baseline". Deep sleep zapnutý, interval **10 min** (jako preset CESTA), ale **HA připojení nechané zapnuté** - jinak by se do Home Assistantu nedostalo nic. V menu se tohle hlásí jako `CUSTOM`, ne `CESTA`; skutečná CESTA má WiFi vypnutou, takže **naměřená spotřeba je horní odhad** té skutečné.
+
+Krabička byla na začátku **nahřátá** (předtím běžela a nabíjela se), baterka **plná a odpojená** (4.152 V / 100 %). Od 03:25 do 03:36 lokálně ještě běželo bez uspávání, pak už jen 71 časovaných probuzení až do 15:46. Ruční odečet referenčního teploměru na konci je v [`reference-thermometer.md`](2026-08-23-cesta-baseline/reference-thermometer.md).
+
+Perioda probuzení vyšla **625.5 s** (medián, rozptyl 622-627 s), tedy 10 min spánku + ~26 s vzhůru. V každém okně **5 čtení CO2** po 5 s, rozsah 19.8 s - přesně to, s čím `update_interval: 5s` počítalo.
+
+#### 1. Výdrž: −0.0076 V/h, což je 38 % rozpočtu
+
+Hlavní číslo celého záznamu. Napětí kleslo **4.1518 → 4.0050 V za 12.36 h**.
+
+| úsek | sklon |
+|---|---|
+| celý záznam (koncové body) | −0.0119 V/h |
+| od +1 h (koncové body) | −0.0072 V/h |
+| od +2 h (lineární fit, 60 bodů) | **−0.0076 V/h** (rezidua sd 6.8 mV) |
+| poslední 6.4 h | −0.0069 V/h |
+
+První hodina je **relaxace po nabíjení**, ne vybíjení: 4.1518 V drží 11 min, pak spadne na 4.0865 V a od 64. minuty se křivka narovná. Do výdrže se počítat nemá.
+
+**Cíl pro CESTA byl −0.02 V/h. Naměřeno −0.0076, tedy 38 % rozpočtu.** Procenta to potvrzují nezávisle: 100 % → 89.9 %, tj. **10.1 procentního bodu za 12.4 h**.
+
+Lineární extrapolace (a je to **jen řádový odhad** - LiPo křivka lineární není a tenhle záznam pokrývá jen horní kousek 4.15-4.00 V):
+
+| z 4.12 V do | čas |
+|---|---|
+| 3.50 V | 81 h ≈ 3.4 dne |
+| 3.30 V | 107 h ≈ 4.5 dne |
+| 3.00 V | 147 h ≈ 6.1 dne |
+
+Proti dřívějším měřením: **-0.08 V/h** v DOMA (`2026-08-22-doma-baseline/`) a **-0.070 V/h** v uspávaném režimu, když SCD41 ještě běžel i ve spánku (`2026-08-22-cesta-wake-cycles/`, interval 5 min). Zlepšení proti tomu druhému je zhruba **9×**, což je víc, než odhadovalo README u opravy `stop_periodic_measurement` (3-4×). Tři výhrady, aby to číslo nebylo přeceněné: změnil se **zároveň** interval (5 → 10 min, tedy poloviční duty cycle), měřilo se v **jiné části vybíjecí křivky** (V/h se nedá porovnávat napříč jejími úseky), a starý záznam navíc nezačínal od plné baterky. Směr i řád ale sedí.
+
+#### 2. Teplota je v tomhle režimu o 3.55 °C pod realitou - a nic to neoznačí
+
+Od 06:00 do konce je BMP180 naprosto klidný: **18.955 °C ± 0.043** (22 bodů za posledních 5 h, bez jednoho výkyvu níž). Referenční teploměr v 15:50 hlásí **22.5 °C**.
+
+| | hodnota | chyba proti referenci |
+|---|---|---|
+| publikováno do HA a na displej | 18.955 | **−3.55 °C** |
+| syrové čtení senzoru (+2.46 zpátky) | 21.415 | −1.09 °C |
+
+**Příčina je jistá a je v kódu:** `REST_OFFSET_BMP180 = 2.46` se odečítá **bezpodmínečně**, ale byl změřen v DOMA, kde zařízení běží nepřetržitě a krabička se od sebe sama trvale hřeje. V uspávaném režimu je zařízení vzhůru **26 s ze 626** (4.2 % času) a BMP180 se čte ~3 s po bootu, tedy ve stavu, do kterého se krabička dostala za 10 min spánku - prakticky v rovnováze s okolím. Není tam co odečítat. README tuhle možnost správně předpovědělo ("nejspíš odečítá víc, než by měl"); teď je změřená.
+
+**Co s tím zbylým −1.09 °C, se z tohohle záznamu rozhodnout nedá.** Může to být vlastní chyba BMP180 (datasheet ±1 °C), chyba teploměru (±0.5 °C), nebo skutečný rozdíl mezi místem krabičky a místem teploměru. Jeden odečet, jeden přístroj, neznámé umístění - viz `reference-thermometer.md`.
+
+Prakticky nejhorší na tom je, že **se to nijak neoznačí.** Displej zkouší SCD41 → BMP180 → cache; SCD41 v tomhle režimu stav nikdy nemá (bod 3), takže se vezme BMP180, ten stav **má**, takže `stale` je `false`. A `suspect` je taky `false`, protože po probuzení z deep sleepu není `cold_boot` a nenabíjí se. Vlnovka se tedy neobjeví a v autě je vidět sebevědomé číslo o 3.5 °C vedle.
+
+#### 3. Ze SCD41 nepřišla za 12 hodin ani jedna teplota nebo vlhkost
+
+Poslední skutečná čtení jsou z 03:25:52 (**25.044 °C**) a 03:25:55 (**63.57 %**), tedy ještě před prvním uspáním. Od **03:36:14** je obojí v HA `unknown` a zůstane tak **12 h 10 min** až do konce záznamu. Obě entity se objeví ve **2 z 72** probuzení - a to jsou ty dvě před spánkem.
+
+Je to **přesně to, co filtr `SCD41_SETTLE_MS = 3 min` má dělat**, a je to i v kódu popsané. Nové je, jak to vypadá z druhé strany: není to "zhoršená" hodnota, je to **`unknown`**, a je to tak celou dobu. Komentář v `packages/sensors.yaml` říká, že hodnoty "stay at the last cached value" - to platí pro **displej** (`cached_temp_scd41`, flash-backed), ne pro Home Assistant. V HA je dlouhodobá statistika obou entit za tuhle noc prostě prázdná.
+
+#### 4. CO2 po probuzení funguje spolehlivě - 72 ze 72
+
+Tohle byla otevřená otázka od opravy s `stop_periodic_measurement` (jestli se senzor po zaparkování na spánek zase rozběhne). **Odpověď: ano, ve všech 72 probuzeních**, pokaždé ~5 čtení. Křivka dává smysl jako celek: 1512 ppm v 03:25, minimum **1112 ppm v 04:49**, pak plynulý růst přes celý den až na **1744 ppm v 15:46**. Žádné výpadky, žádné nesmyslné skoky.
+
+Drobnost, která z toho vypadla: ve **42 ze 72** probuzení je úplně první řádek CO2 v HA `unknown`, a **0.5-4 s** po něm už přijde reálná hodnota. Je to okamžik připojení - HA si vezme stav entity dřív, než senzor stihl první čtení. Kosmetické (hodnota v tom samém probuzení dorazí), ale zapisuje to do recorderu 42 zbytečných `unknown` řádků.
+
+#### 5. Filtry, které potřebují historii, v uspávaném režimu nedělají nic
+
+Tohle je zobecnění, na které záznam přivedl jeden konkrétní výkyv: **14:43:48 lokálně** publikovalo BMP180 **18.028 °C** mezi sousedy 18.911 a 18.917, tedy **−0.886 °C** vedle. Přesně ten typ jednoho špatného I2C čtení, proti kterému byl přidán `median` filtr (okno 3) - a přesto prošel. (Menší, −0.391 °C, je i v 10:33:36.)
+
+Důvod: **deep sleep je plný reboot.** Za jedno probuzení stihne BMP180 při `update_interval: 60s` právě **jedno** čtení, a `median` filtr se rozjíždí od nuly. Se `send_first_at: 1` vydá medián z jednovzorkového okna, což je ten vzorek sám. V uspávaném režimu je ten filtr **no-op**.
+
+Stejný mechanismus (ověřeno čtením konfigurace, ne z těchhle dat) se týká i:
+
+- **tlaku** - stejný `median` filtr, stejné okno, stejný problém;
+- **`battery_voltage`** - medián ze 3 se počítá v lambdě přes `batt_v_hist1/2`, obojí `restore_value: false`, takže po každém bootu je `batt_v_hist2 == 0` a kód spadne do větve `v = raw_v`;
+- **detekce nabíjení** - `batt_v_slow_avg`, `charge_confirm_count`, `full_confirm_count` i `is_charging` jsou všechny `restore_value: false`. Pomalý klouzavý průměr s časovou konstantou ~10 min dostane za probuzení jeden vzorek a pak se zahodí. **V uspávaném režimu proto `Charging` nemůže sepnout nikdy** - a s ním nefunguje ani vlnovka při nabíjení. V tomhle záznamu se nenabíjelo, takže to není z dat potvrzené ani vyvrácené; z konfigurace to ale plyne jednoznačně.
+
+Napětí to mimochodem nijak neublížilo - rezidua fitu jsou 6.8 mV, čistší než ~18 mV šumu popsaných z DOMA. Ale spoléhat se na filtr, který v daném režimu neběží, je štěstí, ne návrh.
+
+#### 6. Procento baterky chybí ve 29 % probuzení
+
+`Battery Level` je `unknown` ve **21 ze 72** probuzení (poprvé 03:36:14, naposledy 15:35:56). Na vině je závod, o kterém komentář v kódu tvrdí, že nastat nemá ("the voltage sensor is registered first and runs first on a shared 60s tick, so this shouldn't trigger"). **Nastává, skoro v třetině probuzení.**
+
+Mechanismus: obě šablony mají `update_interval: 60s` a ESPHome plánuje první běh intervalu na `now + náhodný offset v [0, 5 s)` (`Scheduler::calculate_interval_offset_`) - **nezávisle pro každou komponentu**. Když padne `battery_level` dřív než `battery_voltage`, projde v lambdě pojistka `if (!id(battery_voltage).has_state()) return {};`, nepublikuje se nic, a protože je zařízení vzhůru jen ~26 s, **druhá šance v tom probuzení nepřijde** (další tik by byl za 60 s). HA při připojení odečte stav jako NaN → `unknown`. Že je to pořadím a ne něčím jiným, je vidět v datech: v takovém probuzení má `battery_voltage` platnou hodnotu už v okamžiku připojení, `battery_level` `unknown`.
+
+Displej tím netrpí (`cached_battery_pct` je flash-backed), postižená je řada v HA.
+
+#### 7. Chladnutí po přepnutí do spánku trvá ~3 h
+
+Vedlejší, ale prakticky užitečné číslo, protože přesně tohle se děje, když si člověk vezme rozběhnutou krabičku z bytu do auta. Krabička startovala nahřátá na 25.28 °C publikovaných a klesala na plató 18.97:
+
+| od uspání | publikováno | nad plató |
+|---|---|---|
+| 11 min | 23.19 | +4.22 |
+| 32 min | 21.31 | +2.34 |
+| 64 min | 20.15 | +1.18 |
+| 95 min | 19.69 | +0.72 |
+| 106 min | 19.25 | +0.28 |
+
+Log-fit přes prvních 21 bodů dává **τ ≈ 57 min**, ale jedna exponenciála to není - z prvních bodů vychází τ 28-44 min a postupně roste, což odpovídá dvěma tepelným hmotám (deska a baterka zvlášť). Prakticky: do **0.5 °C** od plató zhruba za **2.5 h**, do 0.25 °C za **3 h**.
+
+Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`) je ~45 min. Chladnutí je tedy podstatně pomalejší než zahřívání - a hlavně **vlnovka ho vůbec nepokrývá**, protože `cold_boot` po probuzení z deep sleepu není nastavené.
+
+#### Ostatní veličiny
+
+- **Tlak** publikován ve všech 72 probuzeních, 966.78 → 968.02 hPa (min 965.69, max 968.59). Bez výpadků.
+- **Tlačítko** se za celou noc neobjevilo - všech 71 probuzení je časovaných. **Probuzení tlačítkem tenhle záznam neověřuje.**
+- **CO2 alarm** nemohl sepnout, maximum je 1744 ppm proti prahu 3000. Pořád neověřený.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -339,4 +443,4 @@ Otevřené zůstává, jestli článek opravdu končí na 4.12 V, nebo jestli d�
 - ~~CESTA transient test~~ **HOTOVO**, viz `2026-08-22-cesta-wake-cycles/` výš - skok se opakuje při každém probuzení a je ~5.5 °C.
 - ~~Teploty při nabíjení~~ **HOTOVO**, dvakrát: `2026-08-22-charging-from-empty/` (+3.7 °C) a `2026-08-23-charging-warm/` (+2.35 °C). `CHARGE_OFFSET_*` zůstávají `0.0` **záměrně** - ty dva záznamy dokazují, že konstanta neexistuje.
 - **Napětí děliče multimetrem** - dnes je násobič 3.2 ověřený v jediném bodě (4.15 V). Chce to odečty kolem 3.5 a 3.8 V. Zároveň to rozhodne, jestli plná baterka opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje.
-- **CESTA baseline** - totéž co `doma-baseline`, ale v režimu CESTA. V CESTA zařízení většinu času spí, takže se zahřívá míň a klidový offset naměřený v DOMA tam nejspíš odečítá víc, než by měl.
+- ~~CESTA baseline~~ **HOTOVO**, viz `2026-08-23-cesta-baseline/` výš - předpověď seděla: v uspávaném režimu se odečítá offset, který tam není, a teplota vychází **3.55 °C pod realitou**. Otevřené zůstává zbytkových −1.09 °C proti syrovému čtení - na to je potřeba **tři odečty po pěti minutách** stejně jako u `rest-offset`, ne jeden.
