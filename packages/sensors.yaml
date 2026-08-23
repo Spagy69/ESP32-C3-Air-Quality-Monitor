@@ -357,7 +357,34 @@ sensor:
             const float REST_OFFSET_BMP180   = 2.46f;  // measured, see above
             const float CHARGE_OFFSET_BMP180 = 0.0f;   // measured: no constant works, see SCD41 above
 
-            float extra = REST_OFFSET_BMP180;
+            // The rest offset only exists while the device runs continuously.
+            // cold_boot is false exactly when this boot is a deep-sleep wake,
+            // which means the enclosure spent the whole sleep interval
+            // settling at ambient and this reading lands ~3s after boot -
+            // there is no self-heating in it to subtract.
+            //
+            // Measured: data/2026-08-23-cesta-baseline/ ran 12.4h at a 4.2%
+            // duty cycle (26s awake per 626s) and the published temperature
+            // sat 3.55C BELOW a reference thermometer - 2.46C of unearned
+            // offset plus a 1.09C residual that a single reference reading
+            // cannot resolve, so that part is left open on purpose.
+            //
+            // Order-of-magnitude check rather than a second constant: 2.46C
+            // at ~34mA/4V puts the enclosure near 18 K/W, so the ~0.3mA that
+            // stays alive through sleep is worth ~0.02C. Zero is the right
+            // number here, not a convenient approximation.
+            //
+            // Keyed on physical history, not on the deep-sleep menu setting,
+            // for the same reason the display picks its temperature source by
+            // "does a live reading exist" instead of by mode.
+            //
+            // Known asymmetry left in place: after a cold power-on cold_boot
+            // is true and the offset is subtracted even though the enclosure
+            // is equally cold - that is the documented -1.1C at 10 minutes,
+            // and it stays hidden behind the "~" warm-up marker rather than
+            // being modelled from uptime (v1 was burned by exactly that class
+            // of time-based correction).
+            float extra = id(cold_boot) ? REST_OFFSET_BMP180 : 0.0f;
             if (id(is_charging)) extra += CHARGE_OFFSET_BMP180;
 
             float corrected = x - extra;
