@@ -174,6 +174,23 @@ Vlhkost šla 77 → 60 % zatímco teplota rostla 23.8 → 28.6. Přepočet přes
 
 CO2 spadlo 2400 → 1540 mezi 16:35 a 17:35 a pak znovu 1750 → 1250 kolem 19:45 - otevřené dveře, normální větrání. Nic se senzorem.
 
+#### Práh CO2 alarmu tu byl překročený - a nikde není, co se stalo
+
+Zpětný nález (srpen 2026). CO2 vylezlo na **5038 ppm** a nad prahem 3000 se
+drželo **80 vzorků, tedy 6.5 minuty** (23:40-23:46 lokálně). Zařízení bylo
+v DOMA, vzhůru, a před dýcháním leželo v klidu, takže armovací pravidlo
+(tři čtení do 150 ppm od sebe) muselo být splněné. Alarm tedy sepnout měl.
+
+**Jestli sepnul, se z dat zjistit nedá.** `co2_alarm_active` je jen globál -
+zapne displej, vynutí STAY a vykreslí varovnou obrazovku, ale **do Home
+Assistantu se nepublikuje jako entita**. V exportu po něm nezůstane stopa,
+ať sepnul nebo ne. Proto je alarm pořád vedený jako neověřený: nemáme
+záznam, ne že by se neměl jak projevit.
+
+Praktický důsledek pro příští test: buď se u toho musí koukat na displej,
+nebo se `co2_alarm_active` napřed vystaví jako `binary_sensor` do HA. To
+druhé by zároveň umožnilo na alarm navázat automatizaci.
+
 ### `2026-08-22-cesta-wake-cycles/` - 50 min, 9 cyklů probuzení z deep sleepu
 
 Test s jedinou otázkou: **spouští startovní skok SCD41 i probuzení z deep sleepu?** Nastaveno DEEP SLEEP zapnuto + HA připojení zapnuté (tedy CUSTOM, ne čistá CESTA - v čisté CESTA je WiFi vypnutá a do HA by se nedostalo nic), interval 5 min. Ve 20:42 lokálně odpojena nabíječka.
@@ -439,7 +456,7 @@ Pro srovnání: zahřívání po **studeném** startu (`2026-08-22-cold-start/`)
 
 - **Tlak** publikován ve všech 72 probuzeních, 966.78 → 968.02 hPa (min 965.69, max 968.59). Bez výpadků.
 - **Tlačítko** se za celou noc neobjevilo - všech 71 probuzení je časovaných. **Probuzení tlačítkem tenhle záznam neověřuje.**
-- **CO2 alarm** nemohl sepnout, maximum je 1744 ppm proti prahu 3000. Pořád neověřený.
+- **CO2 alarm** nemohl sepnout, maximum je 1744 ppm proti prahu 3000. Pořád neověřený - i když v `2026-08-22-breath-test/` práh překročený byl, viz níž.
 
 
 ### `2026-08-23-cesta-po-oprave/` - 2.8 h v uspávaném režimu, ověření oprav v2
