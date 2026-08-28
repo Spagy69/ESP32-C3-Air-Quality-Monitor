@@ -46,7 +46,8 @@ def median3(seq):
     return out
 
 
-def simulate(seq, latch_mv, release_mv, confirm):
+def simulate(seq, latch_mv, release_mv, confirm, inclusive=False):
+    """inclusive=True testuje variantu 'step <= 0' misto 'step < 0'."""
     charging, prev, events, count = False, None, [], 0
     for t, v in seq:
         if prev is not None:
@@ -55,7 +56,7 @@ def simulate(seq, latch_mv, release_mv, confirm):
                 if step > latch_mv:
                     charging, count = True, 0
                     events.append((t, "ON"))
-            elif step < release_mv:
+            elif (step <= release_mv if inclusive else step < release_mv):
                 count += 1
                 if count >= confirm:
                     charging, count = False, 0
@@ -65,23 +66,48 @@ def simulate(seq, latch_mv, release_mv, confirm):
         prev = v
     return events
 
-
-# Nocni zaznam uz je jeden vzorek na probuzeni; nabijeci zaznamy vzorkuji po
-# 60s, takze se z nich bere kazdy desaty, aby to odpovidalo 10min spanku.
+# Nabijeci zaznamy vzorkuji po 60s, takze se z nich bere kazdy desaty, aby to
+# odpovidalo 10min spanku, a median se dopocitava.
+#
+# U zaznamu z uspavaneho rezimu zalezi na tom, KDY vznikly:
+#   - cesta-baseline je z doby PRED opravou, kdy median pres probuzeni
+#     nefungoval (jeho globaly byly restore_value: false). Publikovane
+#     hodnoty jsou tedy syrove vzorky a median se na ne dopocitava.
+#     Bez nej ten zaznam dava falesne sepnuti v 06:07 - je to zaroven
+#     nejlepsi dukaz, ze median neni ozdoba.
+#   - 2026-08-28 uz je s opravenym firmwarem, takze publikovana hodnota UZ
+#     JE vystup medianu. Dopocitavat ho znovu by znamenalo filtrovat dvakrat.
+#
+# drop_first zahazuje prvni vzorek u zaznamu ze spanku: ten pochazi ze
+# studeneho bootu, kde firmware bezi jinou vetvi a last_wake_batt_v jeste
+# nema. Bez toho by sweep sepnul o jedno probuzeni driv, nez to udelal
+# skutecny firmware.
+#           slozka                              stride median drop  ocekavano
 CASES = [
-    ("2026-08-22-charging-from-empty", 10, "ON ~14:30, OFF ~18:10"),
-    ("2026-08-23-charging-warm",       10, "ON ~22:27, zadny OFF (vyrez konci driv)"),
-    ("2026-08-23-cesta-baseline",       1, "NIC - nenabijelo se"),
+    ("2026-08-22-charging-from-empty",      10, True,  False,
+     "ON ~14:30, OFF ~18:08"),
+    ("2026-08-23-charging-warm",            10, True,  False,
+     "ON ~22:27, zadny OFF (vyrez konci driv)"),
+    ("2026-08-23-cesta-baseline",            1, True,  True,
+     "NIC - nenabijelo se"),
+    ("2026-08-28-cesta-nabijeni-a-chladnuti", 1, False, True,
+     "ON 17:41, OFF 19:15 - jedina realna regrese ve spanku, sedi na HA"),
 ]
 
 
 if __name__ == "__main__":
-    print("latch=+%.0fmV  release=<%.0fmV  confirm=%d\n"
+    print("latch=+%.0fmV  release=%.0fmV  confirm=%d"
           % (LATCH_MV, RELEASE_MV, RELEASE_CONFIRM))
-    for folder, stride, expected in CASES:
-        seq = median3(load_voltage(folder)[::stride])
-        events = simulate(seq, LATCH_MV, RELEASE_MV, RELEASE_CONFIRM)
-        got = " ".join("%s@%s" % (k, t.strftime("%H:%M")) for t, k in events)
+    print()
+    for folder, stride, remedian, drop_first, expected in CASES:
+        raw = load_voltage(folder)[::stride]
+        if drop_first:
+            raw = raw[1:]
+        seq = median3(raw) if remedian else raw
         print("%s" % folder)
-        print("   ocekavano: %s" % expected)
-        print("   dostal:    %s\n" % (got or "(nic)"))
+        print("   ocekavano:   %s" % expected)
+        for label, inc in (("step <  0 :", False), ("step <= 0 :", True)):
+            events = simulate(seq, LATCH_MV, RELEASE_MV, RELEASE_CONFIRM, inc)
+            got = " ".join("%s@%s" % (k, t.strftime("%H:%M")) for t, k in events)
+            print("   %s   %s" % (label, got or "(nic)"))
+        print()

@@ -600,9 +600,17 @@ větve "ani pokles" a čítač vynuluje**. Zopakovaná hodnota přitom není
 důkaz nabíjení; je to jen mlčení.
 
 Za celý záznam se medián zopakoval **ve 3 z 22 probuzení** (14 %), takže
-očekávané zdržení je zhruba půl probuzení - drobnost, ne bug. Změna na
-`step <= 0` by to zavřela a na nic jiného by nesáhla, protože přesná nula
-vzniká jedině tímhle způsobem. **Neopraveno**, zapsané jako návrh.
+očekávané zdržení je zhruba půl probuzení.
+
+**Napadlo mě to spravit změnou na `step <= 0` a sweep to zamítl.**
+`data/threshold-sweep.py` tu variantu pouští přes všechny čtyři záznamy a
+na nabíjení z prázdné baterky vypne příznak v **17:12 místo 18:08**, tedy
+**o 56 minut dřív** - přesně uprostřed ploché CV fáze, kde napětí stojí a
+nulové kroky jsou běžné. To je ten samý typ chyby, proti kterému bylo
+`< 0` původně vybrané. Úvaha "přesná nula vzniká jedině zopakovaným
+mediánem" platí jen na tomhle záznamu; v CV fázi vzniká i normálním
+během. **Zůstává `step < 0`**, a zdržení o jedno probuzení je přijatelná
+cena za to, že se příznak neuvolní hodinu před koncem nabíjení.
 
 #### 4. Okno chladnutí je skoro dvakrát delší, než chladnutí trvá
 
@@ -730,5 +738,4 @@ prvních pár vteřin po probuzení. Platný odečet je **TEPLOTA 2** (BMP180)
 - **Druhý referenční teploměr** - tohle je teď jediná cesta, jak zavřít rozdíl **0.94 °C mezi DOMA a CESTA**. Reference je starší lihový teploměr s modrou kapalinou (tolerance u tohohle typu ±1 °C) a proti němu se kalibrovaly klidové offsety, takže DOMA na něj sedí z definice a CESTA je o 0.94 vedle. Rozdělit to na chybu senzoru a chybu teploměru z jednoho přístroje nejde - **další odečty tím samým teploměrem už nic nerozhodnou**. Chce to druhý kus, nejlépe jiného typu, nebo prohodit místa krabičky a teploměru (musí se otočit znaménko). Odvození je v `2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md`.
 - ~~Sepnutí nabíjení v uspávaném režimu~~ **HOTOVO**, viz `2026-08-28-cesta-nabijeni-a-chladnuti/` výš - příznak sepnul **13 min** po zapojení nabíječky, na prvním probuzení, kde to pravidlo vůbec spočítat mohlo, krokem +43.6 mV proti prahu +20. Vypnul 41 min po odpojení. Nejmenší krok za celé nabíjení byl 35 mV, tedy 1.75× nad prahem.
 - **Vlnovka na displeji** - **skoro hotovo**. `2026-08-28-cesta-nabijeni-a-chladnuti/` ověřil obojí na nahřáté krabičce: po celou dobu nabíjení vlnovka **je**, a po vypršení okna (cap čítače padl na probuzení ve 22:59:17) **zmizí**. Zbývá jediné: že se na **studené** krabičce neobjeví vůbec - vypnout na hodinu, zapnout, hned přepnout na CESTA. Odečítat se to musí na stránce **TEPLOTA 2** a **aspoň 10 s po zmáčknutí tlačítka**: VLHKOST má v uspávaném režimu vlnovku vždycky a CO2 i TEPLOTA ji mají prvních pár vteřin po probuzení.
-- **Návrh: `step <= 0` místo `step < 0` při uvolnění nabíjení** - když medián zopakuje bit-identickou hodnotu, vyjde krok přesně 0, spadne do větve "ani pokles" a vynuluje čítač potvrzení. Stalo se to v `2026-08-28-cesta-nabijeni-a-chladnuti/` a odsunulo to vypnutí o jedno probuzení. Přesná nula nevzniká jinak než tímhle způsobem, takže je změna bezpečná - ale je to zásah do firmwaru na základě jednoho výskytu, tak zatím jen zapsaný.
 - **Teplota a vlhkost ze SCD41 v uspávaném režimu** - obojí je tam trvale `unknown`, protože `SCD41_SETTLE_MS` je 3 min proti ~25 s vzhůru. Dnes je to vědomé a zdokumentované, ale znamená to, že jediný zdroj teploty v CESTA je BMP180. Jestli se s tím má něco dělat, není rozhodnuté.
