@@ -491,10 +491,13 @@ sensor:
     accuracy_decimals: 2
     update_interval: 60s
     lambda: |-
-      // TODO(v2 calibration): only the 4.15V point has been checked against
-      // a multimeter so far (matched exactly). Take 2-3 more reference
-      // readings across the range (e.g. ~3.5V, ~3.8V) and replace this if
-      // they show a different multiplier than the divider math predicts.
+      // Checked against a multimeter at two points, both matching: 4.15V
+      // (exact) and 3.81V (meter read 3.81-3.82, probed at the cell's B+
+      // against the XIAO's GND, i.e. the same reference the ADC uses).
+      // A 2% error would be 76mV at 3.81V - far too large to hide. The
+      // untested part is the bottom of the range (~3.5V and below), where
+      // ADC non-linearity would show up first and where the low-battery
+      // warning lives.
       const float BATTERY_DIVIDER_MULTIPLIER = 3.2f;  // (220k+100k)/100k
 
       float sum_mv = 0;
@@ -761,13 +764,12 @@ sensor:
   # i.e. the display could never show a full battery, which reads as a
   # fault rather than as the rounding it is.
   #
-  # Whether the cell truly sits at 4.12 V or the divider under-reads a real
-  # 4.2 V by ~2% is still open (see the multiplier TODO above), and this
-  # map deliberately does not care: taking the top from what the ADC
-  # actually reports when charging finishes makes the percentage
-  # self-consistent either way. The 3.0 V bottom is still nominal - if the
-  # divider does under-read, 0% arrives slightly early, which is the safe
-  # direction.
+  # The cell truly does sit at 4.12 V - the divider does not under-read.
+  # Settled by the second multimeter point above: a 2% error would be 76mV
+  # at 3.81 V, and the meter agreed to within the reading. So this top is
+  # the cell's real top, not an artefact. The 3.0 V bottom is still
+  # nominal and unmeasured; the bottom of the range is the part of the
+  # divider that has never been checked.
   - platform: template
     name: "Battery Level"
     id: battery_level
