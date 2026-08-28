@@ -103,6 +103,71 @@ Než na to spolehneš dlouhodobě, stojí za to ověřit:
 - **Fyzický stav článku** (nabobtnání, poškození obalu) před zabudováním do krytu
 - **Přítomnost/nepřítomnost ochranného obvodu** - pokud článek nemá vlastní BMS/protection PCB, spoléháš čistě na nabíjecí obvod na XIAO desce
 
+## Notifikace na slabou baterku
+
+Tohle se dělá **ručně v Home Assistantu**, ne ve firmwaru, a je to schválně.
+ESPHome by upozornění poslat uměl (`homeassistant.service` volá službu v HA
+přímo ze zařízení), ale nic by se tím nezískalo: to volání potřebuje živé API
+spojení úplně stejně jako automatizace v HA, takže má tu samou slepou skvrnu -
+a navíc by se do firmwaru zadrátoval název služby a práh, který se pak nedá
+změnit bez přeflashování.
+
+Automatizace k vložení do HA:
+
+```yaml
+automation:
+  - alias: "Air Quality Monitor - slabá baterka"
+    description: >
+      Pod 3.4 V zbývá v režimu DOMA zhruba pět hodin provozu, v uspávaném
+      režimu přes dva dny. Ochranný obvod článku vypíná kolem 2.5 V a
+      opakované dojíždění až tam článek ničí.
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.air_quality_monitor_battery_voltage
+        below: 3.4
+        # Dvě po sobě jdoucí probuzení - v uspávaném režimu chodí hodnota
+        # jednou za ~10.4 min, takže tohle je nejkratší smysluplný filtr.
+        for: "00:20:00"
+    condition:
+      # Při nabíjení napětí kolísá a upozornění by nedávalo smysl.
+      - condition: state
+        entity_id: binary_sensor.air_quality_monitor_charging
+        state: "off"
+    action:
+      - service: notify.notify
+        data:
+          title: "Air Quality Monitor"
+          message: >
+            Baterka je na
+            {{ states('sensor.air_quality_monitor_battery_voltage') }} V
+            ({{ states('sensor.air_quality_monitor_battery_level') }} %).
+            Nabij ji.
+    mode: single
+```
+
+`numeric_state` se spustí jen při **překročení** prahu dolů, takže se to
+neopakuje dokola; znovu se to nabije, až napětí vyleze zpátky nad 3.4 V.
+
+**Práh 3.4 V není z katalogu, ale z naměřených rychlostí vybíjení.** V režimu
+DOMA klesá napětí o −0.08 V/h, takže do 3.0 V zbývá zhruba **pět hodin** - dost
+na to všimnout si a zareagovat. V uspávaném režimu je to −0.0076 V/h, tedy
+**přes dva dny**. Detekce se zpozdí o jedno až dvě probuzení, což je při obou
+rychlostech zanedbatelné.
+
+### Kde to nefunguje
+
+**V opravdové CESTA vůbec.** Ten preset **vypíná WiFi** (`wifi.disable`
+v [`packages/menu.yaml`](packages/menu.yaml)), takže zařízení s Home
+Assistantem nemluví a HA o baterce nic neví - ani automatizace, ani volání
+služby z firmwaru na tom nic nezmění. Hlídání napětí funguje jen v **DOMA**
+nebo v uspávaném režimu s **ručně zapnutým HA připojením** (v menu položka
+`HA PŘIPOJENÍ`; tak vznikly všechny záznamy ve [`data/`](data/README.md)).
+
+Pro skutečnou CESTA zbývá jediná spolehlivá cesta: **podívat se na displej**,
+kde je stav baterky vedle hodnoty. Firmware na něm ale dnes **slabou baterku
+nijak nezvýrazňuje** - ukáže procenta nebo napětí stejným písmem jako při
+plné. Lokální varování na displeji je proto otevřený návrh, ne hotová věc.
+
 ## Zahřívání po zapnutí
 
 Po zapnutí (hlavní vypínač baterky) nejsou hodnoty hned přesné. Z reálných záznamů ([`data/`](data/README.md)) je vidět, že jsou to **dvě fáze, které spolu nesouvisí**:
@@ -248,7 +313,7 @@ Skoro každé konkrétní číslo v tomhle README (i většina konstant ve firmw
 
   **Neproměřený zůstává spodek rozsahu** (~3.5 V a níž). Právě tam by se případná nelinearita ADC projevila nejvíc, a je to zároveň oblast, kde na napětí závisí varování před vybitím.
 - **SCD41 běžel i během hlubokého spánku a žral víc než všechno ostatní dohromady (opraveno, srpen 2026).** Senzor není na napájecí větvi ESP32 - 3V3 jde i ve spánku, takže dál měřil po 5 s, i když ho nikdo neposlouchal. Datasheet dává 243 mJ na jedno měření, což při 5s intervalu vychází na **~14.7 mA trvale** proti **0.15 mA** v klidovém režimu - zhruba stokrát víc, a řádově víc než spící ESP32. V datech to je vidět: při 5min intervalu a 30 s vzhůru (desetina času pod proudem) se baterka vybíjela jen o ~15 % pomaleji než při nepřetržitém běhu (−0.070 V/h proti −0.082 až −0.089 V/h). Zpětný výpočet z hodnoty pro nepřetržitý běh dá ~34 mA celkem, což odpovídá ESP s WiFi plus přesně tenhle senzor. Nezávislé potvrzení, že opravdu běžel: teplotní skok při probuzení je ~5.5 °C, mnohem větší než ~2 °C při studeném startu - a takhle rozehřátý být čip nemůže, pokud neměří. **Opraveno** posláním `stop_periodic_measurement` před uspáním, v obou cestách do deep sleepu. Odhad byl 3-4×; **změřeno vyšlo zhruba 9×** - noční záznam ([`data/2026-08-23-cesta-baseline/`](data/README.md), 12.4 h, interval 10 min) dává **−0.0076 V/h** proti −0.070 V/h z `2026-08-22-cesta-wake-cycles/`. Tři výhrady, aby se to číslo nepřecenilo: mezi těmi dvěma záznamy se **zároveň** změnil interval (5 → 10 min, tedy poloviční duty cycle), měřilo se v **jiné části vybíjecí křivky** (V/h se přes ni nedá porovnávat) a starší záznam nezačínal od plné baterky. A **CO2 se po zaparkování spolehlivě rozjede zpátky** - ověřeno ve všech 72 probuzeních té noci, pokaždé ~5 čtení.
-- **Rychlé vybíjení v režimu DOMA.** V testu (srpen 2026, ještě na v1 firmwaru bez deep sleepu) baterka klesla ze 4.15V na 2.71V za ~10 hodin běžného provozu. Hodinový v2 záznam v režimu DOMA (`data/2026-08-22-doma-baseline/`) to potvrzuje: **-0.08 V/h** při zapnuté WiFi a vypnutém displeji. Na to je právě preset **CESTA** (deep sleep), a ten je teď taky změřený: přes noc ([`data/2026-08-23-cesta-baseline/`](data/README.md), 12.4 h, interval 10 min, plná baterka) vyšlo **−0.0076 V/h**, tedy **38 % rozpočtu** −0.02 V/h, který si CESTA kladla za cíl. Procenta to potvrzují nezávisle: 100 % → 89.9 % za 12.4 h. Lineárně extrapolováno (**jen řádový odhad**, LiPo křivka lineární není a záznam pokrývá jen úsek 4.15-4.00 V) to je z plné baterky ~4.5 dne do 3.3 V. Měřeno navíc se **zapnutou WiFi**, kterou skutečná CESTA vypíná - reálná spotřeba je tedy ještě o kus nižší. V DOMA se s trvalým provozem na baterku počítat nedá. Doporučuje se nastavit v Home Assistantu notifikaci na nízké napětí (např. pod 3.3-3.4V), aby se předešlo opakovanému dojíždění až k ochrannému cutoffu (~2.5V, viz sekce Baterie výše) – to urychluje degradaci článku, obzvlášť u recyklovaného.
+- **Rychlé vybíjení v režimu DOMA.** V testu (srpen 2026, ještě na v1 firmwaru bez deep sleepu) baterka klesla ze 4.15V na 2.71V za ~10 hodin běžného provozu. Hodinový v2 záznam v režimu DOMA (`data/2026-08-22-doma-baseline/`) to potvrzuje: **-0.08 V/h** při zapnuté WiFi a vypnutém displeji. Na to je právě preset **CESTA** (deep sleep), a ten je teď taky změřený: přes noc ([`data/2026-08-23-cesta-baseline/`](data/README.md), 12.4 h, interval 10 min, plná baterka) vyšlo **−0.0076 V/h**, tedy **38 % rozpočtu** −0.02 V/h, který si CESTA kladla za cíl. Procenta to potvrzují nezávisle: 100 % → 89.9 % za 12.4 h. Lineárně extrapolováno (**jen řádový odhad**, LiPo křivka lineární není a záznam pokrývá jen úsek 4.15-4.00 V) to je z plné baterky ~4.5 dne do 3.3 V. Měřeno navíc se **zapnutou WiFi**, kterou skutečná CESTA vypíná - reálná spotřeba je tedy ještě o kus nižší. V DOMA se s trvalým provozem na baterku počítat nedá. Hotová automatizace pro Home Assistant i s vysvětlením, proč nepatří do firmwaru a kde nefunguje, je v sekci [Notifikace na slabou baterku](#notifikace-na-slabou-baterku) - opakované dojíždění až k ochrannému cutoffu (~2.5 V, viz sekce Baterie výše) urychluje degradaci článku, obzvlášť u recyklovaného.
 
 ## Licence
 
