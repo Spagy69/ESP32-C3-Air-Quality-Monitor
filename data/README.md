@@ -641,11 +641,29 @@ Tři odečty v ustáleném stavu dávají **−0.94 °C** (sd 0.02) proti −0.9
 jiná výchozí teplota - zbytková chyba je tedy **reprodukovatelná**, ne šum
 jednoho měření.
 
-Čí je, to pořád rozhodnuté není a tenhle záznam to rozhodnout neumí:
-sedí uvnitř součtu katalogových nejistot (BMP180 ±1 °C, lihový teploměr
-±0.5 °C) a je to nejspíš pokaždé ten samý teploměr na tom samém místě.
-Podrobně v [`reference-thermometer.md`](2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md),
-včetně toho, co by to rozhodlo.
+Uživatel navíc dodal, **který teploměr to je**: starší lihový s modrou
+kapalinou, a je to ten samý kus jako při kalibraci offsetů v
+`2026-08-22-rest-offset/`. Tím se dá dopočítat něco, co dosud nešlo.
+
+Konstanta 2.46 byla nastavená jako `raw − teploměr` v DOMA, takže tam
+zařízení sedí na teploměr **z definice**. V CESTA se neodečítá a
+self-heating tam podle duty cyklu není. Odečtením obou vztahů vypadne
+chyba teploměru i chyba senzoru a zůstane:
+
+> **Skutečné self-heating v nepřetržitém provozu je 3.40 °C**, ne 2.46 -
+> a tohle číslo nezávisí na tom, jak přesný ten teploměr je.
+
+Konstanta 2.46 tedy nikdy nebyla čisté self-heating, ale **rozdíl** ohřevu
+3.40 a chyby BMP180 proti referenci −0.94. Dokud se odečítala v obou
+režimech, nezáleželo na tom. Od chvíle, kdy se odečítá jen při studeném
+startu, ano: **DOMA teď čte o 0.94 °C výš než CESTA** ve stejné místnosti.
+To je fakt o zařízení, ne o teploměru.
+
+**Který z těch dvou režimů je ten správný, rozhodnuté není** a dalšími
+odečty tím samým teploměrem to rozhodnout nejde - jeho chyba se z nich
+nevydělí. Rozhodne druhý referenční teploměr, nebo prohození míst krabičky
+a teploměru. Celé odvození je v
+[`reference-thermometer.md`](2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md).
 
 #### 6. Procenta baterky: 0 výpadků ve 22 probuzeních
 
@@ -677,22 +695,23 @@ co publikuje napětí. Lambda tedy běžela, jen publikovala totéž co minule.
 | chyba teploty proti referenci | **reprodukovaná** - −0.94 proti −0.90 z 23. 8. |
 | procenta baterky nevypadnou | **prošlo** podruhé - 0 z 22 |
 | vlnovka na nahřáté krabičce **je** | **prošlo** - vidět po celou dobu nabíjení |
-| vlnovka po vypršení okna **zmizí** | **neuzavřeno** - viz níž |
+| vlnovka po vypršení okna **zmizí** | **prošlo** - cap padl ve 22:59:17, odečet s 10s odstupem ji už neukázal |
 | vlnovka se na studené krabičce neobjeví | **neověřeno** - chce zvlášť studený start |
 
-**K té poslední otevřené položce.** Čítač `disturb_minutes` se naposledy
+**Dovětek: vlnovka nakonec prošla.** Čítač `disturb_minutes` se naposledy
 vynuloval na probuzení ve 20:33:30 (poslední krok nad prahem) a od té doby
-přičítá 10 na probuzení. Cap 150 tedy padne přesně na probuzení ve
-**22:59:17**, což je poslední řádek záznamu - od toho okamžiku má být
-vlnovka pryč. Uživatel ji ale ve 23:08 na displeji ještě viděl.
+přičítal 10 na probuzení, takže cap 150 padl přesně na probuzení ve
+**22:59:17** - poslední řádek záznamu. Odečet ve 23:08 vlnovku ještě
+ukazoval, ale to byl artefakt odečtu: uživatel ji četl hned po zmáčknutí
+tlačítka, kdy senzory ještě nestihly publikovat a vlnovka je tam z titulu
+`stale`, ne okna chladnutí. Po opakovaném odečtu **s deseti vteřinami
+čekání byla vlnovka pryč**, přesně jak předpověď říkala.
 
-Rozpor je nejspíš v tom, **co se odečítalo**, ne ve firmwaru. Vlnovka
-znamená tři různé věci a dvě z nich s oknem chladnutí nesouvisí:
-stránka **VLHKOST** má v uspávaném režimu vlnovku **vždycky** (druhý zdroj
-neexistuje), a **CO2 i TEPLOTA** ji mají prvních pár vteřin po probuzení,
-než senzory stihnou publikovat. Odečet, který o okně chladnutí opravdu
-něco říká, je **TEPLOTA 2** (BMP180) přečtená **aspoň 10 s po zmáčknutí
-tlačítka**. Zavře to teprve další export.
+Poučení pro příští odečty: vlnovka znamená tři různé věci a dvě z nich
+s oknem chladnutí nesouvisí. Stránka **VLHKOST** ji má v uspávaném režimu
+**vždycky** (druhý zdroj vlhkosti neexistuje) a **CO2 i TEPLOTA** ji mají
+prvních pár vteřin po probuzení. Platný odečet je **TEPLOTA 2** (BMP180)
+**aspoň 10 s po zmáčknutí tlačítka**.
 
 ## Nové měření - jak ho sem přidat
 
@@ -708,8 +727,8 @@ tlačítka**. Zavře to teprve další export.
 - **Napětí děliče multimetrem** - dnes je násobič 3.2 ověřený v jediném bodě (4.15 V). Chce to odečty kolem 3.5 a 3.8 V. Zároveň to rozhodne, jestli plná baterka opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje.
 - ~~CESTA baseline~~ **HOTOVO**, viz `2026-08-23-cesta-baseline/` výš - předpověď seděla: v uspávaném režimu se odečítal offset, který tam není, a teplota vycházela **3.55 °C pod realitou**. Opraveno a ověřeno na hardwaru, viz `2026-08-23-cesta-po-oprave/`.
 - ~~Ověření oprav v2 na hardwaru~~ **ČÁSTEČNĚ**, viz `2026-08-23-cesta-po-oprave/` výš - offset, procenta baterky, medián přes probuzení i absence falešného nabíjení sedí. Dvě věci ten záznam neověřil a zůstávají otevřené (níž).
-- **Teplota v uspávaném režimu proti referenci** - **reprodukováno**, ale ne uzavřeno. Dva nezávislé záznamy dávají **−0.90 °C** (23. 8., sd 0.18) a **−0.94 °C** (28. 8., sd 0.02), takže o šum jednoho měření nejde. Čí ta chyba je, rozhodnuté není - sedí uvnitř součtu katalogových nejistot (BMP180 ±1, teploměr ±0.5) a je to nejspíš pokaždé ten samý teploměr na tom samém místě. Rozhodne až **druhý referenční teploměr**, nebo prohození míst krabičky a teploměru (musí se otočit znaménko). A **pořád není zapsané, který teploměr to je** - u obou záznamů.
+- **Druhý referenční teploměr** - tohle je teď jediná cesta, jak zavřít rozdíl **0.94 °C mezi DOMA a CESTA**. Reference je starší lihový teploměr s modrou kapalinou (tolerance u tohohle typu ±1 °C) a proti němu se kalibrovaly klidové offsety, takže DOMA na něj sedí z definice a CESTA je o 0.94 vedle. Rozdělit to na chybu senzoru a chybu teploměru z jednoho přístroje nejde - **další odečty tím samým teploměrem už nic nerozhodnou**. Chce to druhý kus, nejlépe jiného typu, nebo prohodit místa krabičky a teploměru (musí se otočit znaménko). Odvození je v `2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md`.
 - ~~Sepnutí nabíjení v uspávaném režimu~~ **HOTOVO**, viz `2026-08-28-cesta-nabijeni-a-chladnuti/` výš - příznak sepnul **13 min** po zapojení nabíječky, na prvním probuzení, kde to pravidlo vůbec spočítat mohlo, krokem +43.6 mV proti prahu +20. Vypnul 41 min po odpojení. Nejmenší krok za celé nabíjení byl 35 mV, tedy 1.75× nad prahem.
-- **Vlnovka na displeji** - **částečně**. Že na nahřáté krabičce **je**, ověřil `2026-08-28-cesta-nabijeni-a-chladnuti/` (vidět po celou dobu nabíjení). Otevřené zůstávají dvě věci: že po vypršení okna **zmizí** (ve 23:08 byla ještě vidět, i když čítač měl být na capu už od 22:59 - nejspíš se odečítala stránka, která má vlnovku z jiného důvodu), a že se na **studené** krabičce neobjeví vůbec. Odečítat se to musí na stránce **TEPLOTA 2** a **aspoň 10 s po zmáčknutí tlačítka**: VLHKOST má v uspávaném režimu vlnovku vždycky a CO2 i TEPLOTA ji mají prvních pár vteřin po probuzení.
+- **Vlnovka na displeji** - **skoro hotovo**. `2026-08-28-cesta-nabijeni-a-chladnuti/` ověřil obojí na nahřáté krabičce: po celou dobu nabíjení vlnovka **je**, a po vypršení okna (cap čítače padl na probuzení ve 22:59:17) **zmizí**. Zbývá jediné: že se na **studené** krabičce neobjeví vůbec - vypnout na hodinu, zapnout, hned přepnout na CESTA. Odečítat se to musí na stránce **TEPLOTA 2** a **aspoň 10 s po zmáčknutí tlačítka**: VLHKOST má v uspávaném režimu vlnovku vždycky a CO2 i TEPLOTA ji mají prvních pár vteřin po probuzení.
 - **Návrh: `step <= 0` místo `step < 0` při uvolnění nabíjení** - když medián zopakuje bit-identickou hodnotu, vyjde krok přesně 0, spadne do větve "ani pokles" a vynuluje čítač potvrzení. Stalo se to v `2026-08-28-cesta-nabijeni-a-chladnuti/` a odsunulo to vypnutí o jedno probuzení. Přesná nula nevzniká jinak než tímhle způsobem, takže je změna bezpečná - ale je to zásah do firmwaru na základě jednoho výskytu, tak zatím jen zapsaný.
 - **Teplota a vlhkost ze SCD41 v uspávaném režimu** - obojí je tam trvale `unknown`, protože `SCD41_SETTLE_MS` je 3 min proti ~25 s vzhůru. Dnes je to vědomé a zdokumentované, ale znamená to, že jediný zdroj teploty v CESTA je BMP180. Jestli se s tím má něco dělat, není rozhodnuté.

@@ -148,7 +148,7 @@ Kolik se tomu dá věřit. Rozlišuj dvě různé věci - **krátkodobou stabili
 
 ### Tři věci, které je fér říct nahlas
 
-**1. Zařízení nemůže být přesnější než reference, kterou se kalibrovalo.** Offsety jsou nastavené proti lihovému teploměru, jehož vlastní přesnost je tak ±0.5 °C. Ty tři odečty vyšly shodně (23.9), takže *opakovatelnost* odečtu byla dobrá - ale jestli ten teploměr sám neukazuje o půl stupně vedle, se z ničeho nedozvíme. Těch ±0.5 °C je strop daný referencí, ne senzory.
+**1. Zařízení nemůže být přesnější než reference, kterou se kalibrovalo.** Offsety jsou nastavené proti staršímu lihovému teploměru s modrou kapalinou, jehož vlastní tolerance je u tohohle typu tak **±1 °C** (a stupnice bývá po celých stupních, takže desetina je odhad mezi ryskami). Ty tři odečty vyšly shodně (23.9), takže *opakovatelnost* odečtu byla dobrá - ale jestli ten teploměr sám neukazuje o půl stupně vedle, se z ničeho nedozvíme. Těch ±0.5 °C je strop daný referencí, ne senzory.
 
 **2. Shoda obou senzorů už není nezávislý důkaz.** Dřív se dalo argumentovat, že SCD41 a BMP180 se shodnou na 0.35 °C, i když mají úplně jiné offsety. Jenže **teď jsou oba kalibrované proti tomu samému teploměru**, takže když je ten vedle o 0.7 °C, jsou vedle oba stejně. Ta shoda je konzistence, ne správnost.
 
@@ -212,7 +212,11 @@ Skoro každé konkrétní číslo v tomhle README (i většina konstant ve firmw
 
   **Ověřeno na železe** ([`data/2026-08-23-cesta-po-oprave/`](data/README.md), 2.8 h, 16 probuzení): skok je vidět přímo v datech, protože flash boot je ještě `cold_boot` a odečítá - 19.746 °C v 17:40, **22.421 °C při prvním probuzení ze spánku**, tedy +2.676 proti konstantě 2.46 (zbytek je skutečný drift za těch 10 min). Proti referenčnímu teploměru ve třech bodech **−0.90 °C** (sd 0.18) tam, kde ta samá data bez opravy dávají −3.36.
 
-  **Zbytek tím ale opravený není** a je to dvojnásobek deklarované přesnosti ±0.5 °C. Druhý záznam ([`data/2026-08-28-cesta-nabijeni-a-chladnuti/`](data/README.md)) dal **−0.94 °C** se směrodatnou odchylkou 0.02, s krabičkou prokazatelně ustálenou (rozptyl 0.043 °C přes hodinu). Dva nezávislé záznamy, jiný den, jiný stav baterky, jiná výchozí teplota - zbytková chyba je tedy **reprodukovatelná**, ne šum jednoho měření. Čí je, to rozhodnuté pořád není: sedí uvnitř součtu katalogových nejistot (BMP180 ±1 °C, lihový teploměr ±0.5 °C) a je to nejspíš pokaždé ten samý teploměr na tom samém místě. Rozhodl by to až druhý referenční teploměr, nebo prohození míst krabičky a teploměru - to musí otočit znaménko.
+  **Zbytek tím ale opravený není.** Druhý záznam ([`data/2026-08-28-cesta-nabijeni-a-chladnuti/`](data/README.md)) dal **−0.94 °C** se směrodatnou odchylkou 0.02, s krabičkou prokazatelně ustálenou (rozptyl 0.043 °C přes hodinu). Dva nezávislé záznamy, jiný den, jiný stav baterky - zbytková chyba je tedy **reprodukovatelná**, ne šum.
+
+  **A protože je reference pořád ten samý teploměr jako při kalibraci offsetů, dá se z toho dopočítat, co ta konstanta 2.46 doopravdy je.** Nastavená byla jako `raw − teploměr` v režimu DOMA, takže tam zařízení sedí na teploměr *z definice*. V uspávaném režimu se neodečítá a self-heating tam podle duty cyklu není. Odečtením obou vztahů vypadne chyba teploměru i chyba senzoru a zbude **skutečné self-heating 3.40 °C** - číslo nezávislé na tom, jak přesná ta reference je. Konstanta 2.46 tedy nikdy nebyla čisté self-heating, ale **rozdíl** ohřevu 3.40 a vlastní chyby BMP180 −0.94.
+
+  **Praktický důsledek: DOMA čte o 0.94 °C výš než uspávaný režim** ve stejné místnosti. To je fakt o zařízení, ne o teploměru. Který z těch dvou režimů je ten správný, rozhodnuté **není**: když je přesný teploměr, čte BMP180 nízko a správně je DOMA; když je přesný senzor, ukazuje teploměr vysoko a správně je uspávaný režim. Obojí sedí do tolerancí (BMP180 ±1 °C, teploměr ±1 °C) a **dalšími odečty tím samým teploměrem se to rozhodnout nedá** - jeho chyba se z nich nevydělí. Rozhodne druhý referenční teploměr, nebo prohození míst krabičky a teploměru: to musí otočit znaménko.
 
   Displej tenhle stav označuje: po přepnutí nahřáté krabičky do uspávaného režimu drží vlnovku po dobu okna chladnutí (150 min, viz níž).
 
