@@ -738,6 +738,67 @@ s oknem chladnutí nesouvisí. Stránka **VLHKOST** ji má v uspávaném režimu
 prvních pár vteřin po probuzení. Platný odečet je **TEPLOTA 2** (BMP180)
 **aspoň 10 s po zmáčknutí tlačítka**.
 
+### `2026-08-28-co2-dychnuti-v-cesta/` - 42 min, pokus vyvolat CO2 alarm ve spánku
+
+**Podmínky.** Zapnuto vypínačem v **00:22** a hned přepnuto na **CESTA**
+(interval 10 min), HA připojení zapnuté. V **00:52** jednou dýchnuto do
+krabičky, tedy **do spícího zařízení** - mezi probuzeními. Nabíječka
+odpojená. Export obsahuje **jen CO2**, ostatní veličiny v něm nejsou.
+
+Cílem bylo sepnout CO2 alarm (práh 3000 ppm). **Nesepnul** - ale ne z těch
+důvodů, které se čekaly, a záznam je proto užitečnější, než kdyby vyšel.
+
+#### 1. Krabička drží vydýchaný vzduch mnohem líp, než se čekalo
+
+Předpoklad před testem byl, že se dýchnutí v neutěsněné krabičce rozptýlí
+za minutu za dvě a spící zařízení ho nemá jak zahlédnout. **Není to pravda.**
+
+| probuzení | CO2 |
+|---|---|
+| 00:22 (boot) | 1183-1193 |
+| 00:33 | 1183-1204 |
+| 00:43 | 1198-1205 |
+| **00:54** (2 min po dýchnutí) | **2304-2313** |
+| 01:04 | 1510-1514 |
+
+Z rozpadu 2305 → 1510 proti základu ~1150 vychází časová konstanta
+**τ ≈ 8.9 min**, tedy zhruba stejná jako interval spánku. Dýchnutí bylo
+o dvě minuty dřív než probuzení a senzor ho pořád viděl skoro celé:
+zpětnou extrapolací byla špička kolem **2580 ppm**.
+
+#### 2. Armovací pravidlo v uspávaném režimu funguje
+
+Druhá obava byla, že se alarm ve 30s okně nestihne ozbrojit, protože chce
+**tři čtení po sobě do 150 ppm od sebe** a klesající křivka po dýchnutí se
+prý bude hýbat moc. Taky mimo: pět čtení v tom probuzení bylo
+**2305, 2313, 2307, 2304, 2305**, tedy rozptyl **9 ppm** - dvacetkrát pod
+prahem stability. Alarm se ozbrojil na třetím čtení a měl pak dvě čtení na
+to sepnout.
+
+Že to takhle sedí, není náhoda: `co2_alarm_armed` je `restore_value: false`,
+takže se každé probuzení armuje znovu od nuly. Na to jsou v 30s okně přesně
+tři čtení na ozbrojení a dvě na rozhodnutí. **Rezerva je tenká, ale je.**
+
+#### 3. Nesepnul jediný důvod: bylo toho málo
+
+Do prahu chybělo **695 ppm**. Jedno dýchnutí zvedlo hladinu asi o 1400 ppm
+nad základ, potřeba je zvednout ji o 1850. Nic víc v tom není - žádné
+zaspání, žádné neozbrojení, žádná chyba pravidla.
+
+**Pro příští pokus:** dýchat víc (několikrát po sobě), a ideálně těsně před
+probuzením. Při τ ≈ 9 min hladina mezi dýchnutím a probuzením spadne jen
+o zlomek, takže stačí trefit se do jednoho intervalu. Alarm se pozná tak, že
+**zařízení přestane spát a displej zůstane svítit** - `co2_alarm_active`
+nastavuje `stay_on` a uspávání je tou proměnnou blokované
+([`packages/menu.yaml`](packages/menu.yaml)).
+
+#### 4. Vedlejší potvrzení
+
+Probuzení chodila v **00:22, 00:33, 00:43, 00:54, 01:04**, tedy kadence
+10.4 min jako všude jinde, a CO2 se rozjelo **v každém z nich** (5 čtení na
+probuzení). To je další sada k těm 72 + 22 probuzením, kde `stop`/`start`
+periodického měření spolehlivě funguje.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
