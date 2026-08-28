@@ -521,7 +521,179 @@ Vedlejší nález, který za zápis stojí. Skutečná perioda je **10.41 min**,
 | medián přes probuzení funguje | **ověřeno** - žádný výkyv, sd kroku 1.45 mV |
 | nabíjení nesepne falešně | **ověřeno** - 0 z 11 kroků, 8× rezerva |
 | nabíjení sepne s nabíječkou | **neověřeno** - nabíječka nebyla připojená |
-| vlnovka se chová podle okna | **neověřeno** - tlačítko nezmáčknuté |
+| vlnovka se chová podle okna | **neověřeno** - tlačítko nezmáčknuté |### `2026-08-28-cesta-nabijeni-a-chladnuti/` - 3.5 h v uspávaném režimu, nabíječka a okno chladnutí
+
+**Podmínky.** Baterka dojetá do vypnutí (nechaná vybít, zařízení se samo
+vyplo). V **19:28** zapojená nabíječka - zařízení se tím okamžitě
+nabootovalo, protože XIAO bere napájení z USB, jakmile je připojené, a
+nečeká na článek. Hned při tom bootu přepnuto na **CESTA** (interval 10 min).
+Připojení k HA zapnuté, takže menu hlásí CUSTOM, ne CESTA. Nabíječka
+odpojená ve **20:34**, tedy po 66 minutách. Zbytek záznamu leží krabička
+v klidu, displej zhasnutý, jen časovaná probuzení. Referenční teploměr
+vedle, odečty v [`reference-thermometer.md`](2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md).
+Záznam končí ve 22:59, export se stahoval ve 23:08.
+
+Účel byl zavřít dva hardwarové testy, které ověřovací záznam z 23. 8.
+nedosáhl: **sepnutí nabíjení ve spánku** a **chování vlnovky**. První
+prošel, druhý ne úplně - viz konec sekce.
+
+**22 probuzení**, kadence 10.42 min, jedno z nich je probuzení tlačítkem
+ve 19:30:52 (2.4 min po bootu, tedy ne časovač).
+
+#### 1. Probuzení tlačítkem funguje - a `cold_boot` se u něj chová správně
+
+Tohle nebyl plánovaný nález, ale je to nejdůležitější řádek celého
+záznamu: `wakeup_pin` na ESP32-C3 byla neověřená od začátku projektu.
+
+Probuzení ve 19:30:52 je od bootu vzdálené 2.4 min, zatímco interval je
+10 min - časovač to být nemůže. A publikovaná teplota u něj je **21.940 °C**
+proti **18.880 °C** o dvě minuty dřív. Ten rozdíl +3.06 °C je klidový
+offset, který se **neodečetl**, plus reálný ohřev z rozjeté nabíječky.
+Zařízení tedy ten boot vyhodnotilo jako probuzení, ne jako studený start.
+
+Znamená to dvě věci najednou: tlačítko probouzí, a `esp_sleep_get_wakeup_cause()`
+vrací u GPIO probuzení správnou hodnotu, takže se offset i vlnovka
+větví, jak mají. Kdyby vracelo `UNDEFINED`, teplota by po každém
+zmáčknutí tlačítka spadla o 2.46 °C.
+
+#### 2. `Charging` sepne ve spánku - do 13 minut
+
+**Test prošel.** Nabíječka připojená v 19:28, `Charging` naskočilo
+v **19:41:27**, tedy na prvním probuzení, na kterém to vůbec bylo možné -
+pravidlo potřebuje napětí z předchozího probuzení, a to bylo poprvé
+k dispozici právě tam. Krok byl **+43.6 mV** proti prahu +20.
+
+Kroky napětí během nabíjení, v mV proti minulému probuzení:
+
+```
+19:41 +43.6   19:51 +115.8   20:02 +93.7   20:12 +52.3   20:23 +98.2   20:33 +35.1
+```
+
+Nejmenší z nich je 35 mV, tedy pořád **1.75x nad prahem**, a to i na konci
+nabíjení, kde proud dobíhá. Sweep predikoval ~+40 mV za deset minut;
+naměřený medián je +72. Práh +20 tak sedí uprostřed rezervy z obou stran -
+ověřovací záznam z 23. 8. ukázal, že šum vybíjení ho nedosáhne ani
+osminásobně, tenhle ukazuje, že skutečné nabíjení ho překročí nejmíň
+1.75krát.
+
+Baterka za těch 66 minut vyrostla z **3.129 V / 11.5 %** na **3.901 V / 80.4 %**.
+Po odpojení klesla na 3.827 V / 73.9 % - těch 6.5 procentního bodu je
+nabíjecí napětí, ne kapacita, takže procenta odečtená **při zapojené
+nabíječce jsou nadhodnocená**.
+
+#### 3. Vypnutí nabíjení sedí na pravidlo přesně - a odhalilo drobnost
+
+`Charging` zhaslo ve **21:15:04**, tedy 41 minut po odpojení. Pravidlo chce
+tři po sobě jdoucí záporné kroky a tady na to bylo potřeba čtyři
+probuzení. Proč, je vidět v datech:
+
+| probuzení | krok | `discharge_confirm_count` |
+|---|---|---|
+| 20:43:50 | **0.0 mV** (medián zopakoval hodnotu) | vynulován |
+| 20:54:12 | −41.9 mV | 1 |
+| 21:04:39 | −16.7 mV | 2 |
+| 21:15:04 | −4.3 mV | 3 → vypnuto |
+
+Ta nula není chyba měření - je to medián, který vydal tentýž vzorek jako
+minule. Pravidlo ale testuje `step < 0`, takže **nulový krok spadne do
+větve "ani pokles" a čítač vynuluje**. Zopakovaná hodnota přitom není
+důkaz nabíjení; je to jen mlčení.
+
+Za celý záznam se medián zopakoval **ve 3 z 22 probuzení** (14 %), takže
+očekávané zdržení je zhruba půl probuzení - drobnost, ne bug. Změna na
+`step <= 0` by to zavřela a na nic jiného by nesáhla, protože přesná nula
+vzniká jedině tímhle způsobem. **Neopraveno**, zapsané jako návrh.
+
+#### 4. Okno chladnutí je skoro dvakrát delší, než chladnutí trvá
+
+Poprvé máme změřené, jak dlouho krabička po nabíjení opravdu chladne.
+Odchylka BMP180 od ustálené hodnoty (22.477 °C) po odpojení ve 20:34:
+
+| od odpojení | teplota | odchylka |
+|---|---|---|
+| +10 min | 25.109 | +2.63 |
+| +30 min | 23.367 | +0.89 |
+| +41 min | 22.962 | +0.49 |
+| +62 min | 22.587 | +0.11 |
+| **+72 min** | 22.544 | **+0.07** |
+| **+83 min** | 22.483 | **+0.01** |
+| +145 min | 22.477 | 0.00 |
+
+Do ±0.1 °C je krabička za **72 minut**, do ±0.05 °C za **83**. Okno
+`cooldown_min` je přitom 150 započtených minut, což při 4% pomalejším
+čítači dělá **~156 minut reálných**. Je tedy zhruba **1.9x delší, než by
+muselo být**.
+
+Není to chyba - okno bylo odvozené z logaritmického fitu a být na jistotě
+delší je správný směr. Ale teď je změřené, takže kdyby někdy vadilo, že
+vlnovka visí zbytečně dlouho, je z čeho ho zkrátit.
+
+Vrchol ohřevu je mimochodem **+4.12 °C** nad ustálenou hodnotou (26.594 °C
+ve 20:23, 55 min od zapojení). To je **třetí** záznam nabíjení a zároveň
+největší číslo ze všech tří: +4.12 z dojeté baterky, +3.7 z prázdné,
++2.35 z 64 %. Rozpětí 1.8 °C jen podle počátečního stavu - argument, proč
+`CHARGE_OFFSET_*` zůstávají 0.0, je tím potvrzený potřetí.
+
+#### 5. Teplota proti referenci: −0.94 °C, a je to reprodukovatelné
+
+Tři odečty v ustáleném stavu dávají **−0.94 °C** (sd 0.02) proti −0.90
+(sd 0.18) z 23. 8. Dva nezávislé záznamy, jiný den, jiný stav baterky,
+jiná výchozí teplota - zbytková chyba je tedy **reprodukovatelná**, ne šum
+jednoho měření.
+
+Čí je, to pořád rozhodnuté není a tenhle záznam to rozhodnout neumí:
+sedí uvnitř součtu katalogových nejistot (BMP180 ±1 °C, lihový teploměr
+±0.5 °C) a je to nejspíš pokaždé ten samý teploměr na tom samém místě.
+Podrobně v [`reference-thermometer.md`](2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md),
+včetně toho, co by to rozhodlo.
+
+#### 6. Procenta baterky: 0 výpadků ve 22 probuzeních
+
+`battery_voltage` i `battery_level` mají **nula** řádků `unknown`, zatímco
+CO2, teplota a tlak jich mají 18-22 (jeden na každé připojení). Stejná
+asymetrie jako v ověřovacím záznamu a stejný závěr: chybějící řádky nejsou
+výpadky. Řádků je 19 na 22 probuzení a ty tři chybějící jsou probuzení,
+kde medián vydal **bit-identickou** hodnotu.
+
+Že se ta probuzení opravdu odehrála, dokazuje `charging_duration`: ve
+20:43:50 hlásí 70 minut, což je hodnota, kterou nastavuje ta samá lambda,
+co publikuje napětí. Lambda tedy běžela, jen publikovala totéž co minule.
+
+#### Ostatní veličiny
+
+- **CO2** běželo ve **všech 22 probuzeních**, 3-10 čtení na probuzení,
+  rozsah 536-1073 ppm. Vyvětraná místnost, žádné výpadky.
+- **Teplota a vlhkost ze SCD41** jsou celý záznam `unknown`, jak se čeká -
+  `SCD41_SETTLE_MS` je 3 min proti ~26 s vzhůru.
+- **Tlak** publikoval na každém probuzení, bez výkyvů.
+
+#### Stav hardwarových testů po tomhle záznamu
+
+| test | výsledek |
+|---|---|
+| probuzení tlačítkem z deep sleepu | **prošlo** - 19:30:52, a `cold_boot` se u něj větví správně |
+| `Charging` sepne s nabíječkou ve spánku | **prošlo** - 13 min, krok +43.6 mV proti prahu +20 |
+| `Charging` vypne po odpojení | **prošlo** - 41 min, přesně na tři potvrzení |
+| chyba teploty proti referenci | **reprodukovaná** - −0.94 proti −0.90 z 23. 8. |
+| procenta baterky nevypadnou | **prošlo** podruhé - 0 z 22 |
+| vlnovka na nahřáté krabičce **je** | **prošlo** - vidět po celou dobu nabíjení |
+| vlnovka po vypršení okna **zmizí** | **neuzavřeno** - viz níž |
+| vlnovka se na studené krabičce neobjeví | **neověřeno** - chce zvlášť studený start |
+
+**K té poslední otevřené položce.** Čítač `disturb_minutes` se naposledy
+vynuloval na probuzení ve 20:33:30 (poslední krok nad prahem) a od té doby
+přičítá 10 na probuzení. Cap 150 tedy padne přesně na probuzení ve
+**22:59:17**, což je poslední řádek záznamu - od toho okamžiku má být
+vlnovka pryč. Uživatel ji ale ve 23:08 na displeji ještě viděl.
+
+Rozpor je nejspíš v tom, **co se odečítalo**, ne ve firmwaru. Vlnovka
+znamená tři různé věci a dvě z nich s oknem chladnutí nesouvisí:
+stránka **VLHKOST** má v uspávaném režimu vlnovku **vždycky** (druhý zdroj
+neexistuje), a **CO2 i TEPLOTA** ji mají prvních pár vteřin po probuzení,
+než senzory stihnou publikovat. Odečet, který o okně chladnutí opravdu
+něco říká, je **TEPLOTA 2** (BMP180) přečtená **aspoň 10 s po zmáčknutí
+tlačítka**. Zavře to teprve další export.
+
 ## Nové měření - jak ho sem přidat
 
 1. V HA: **History** → vybrat entitu (nebo víc) → časový rozsah → **Download data**.
@@ -536,7 +708,8 @@ Vedlejší nález, který za zápis stojí. Skutečná perioda je **10.41 min**,
 - **Napětí děliče multimetrem** - dnes je násobič 3.2 ověřený v jediném bodě (4.15 V). Chce to odečty kolem 3.5 a 3.8 V. Zároveň to rozhodne, jestli plná baterka opravdu končí na 4.12 V, nebo jestli dělič podhodnocuje.
 - ~~CESTA baseline~~ **HOTOVO**, viz `2026-08-23-cesta-baseline/` výš - předpověď seděla: v uspávaném režimu se odečítal offset, který tam není, a teplota vycházela **3.55 °C pod realitou**. Opraveno a ověřeno na hardwaru, viz `2026-08-23-cesta-po-oprave/`.
 - ~~Ověření oprav v2 na hardwaru~~ **ČÁSTEČNĚ**, viz `2026-08-23-cesta-po-oprave/` výš - offset, procenta baterky, medián přes probuzení i absence falešného nabíjení sedí. Dvě věci ten záznam neověřil a zůstávají otevřené (níž).
-- **Teplota v uspávaném režimu proti referenci pořádně** - zbytkových **−0.90 °C** je dvojnásobek deklarované ±0.5 °C a tři odečty rozházené přes 2 h to nerozhodnou. Potřeba **tři odečty po pěti minutách** na konci aspoň tříhodinového běhu, stejný protokol jako u `rest-offset`, a **zapsat, který teploměr to je**.
-- **Sepnutí nabíjení v uspávaném režimu** - `2026-08-23-cesta-po-oprave/` dokazuje jen to, že příznak nesepne sám od sebe (0 z 11 kroků, 8× rezerva na prahu). Že sepne, když se nabíječka opravdu připojí, ověřené není. Stačí na to ~30 min v tom režimu s nabíječkou; příznak má chytnout do dvou probuzení.
-- **Vlnovka na displeji** - je vidět jen na displeji a ten při časovaném probuzení nesvítí, takže se to musí odečítat ručně s tlačítkem. Dvě věci: na nahřáté krabičce má do ~2.5 h po zapnutí uspávání **být** a pak zmizet, na studené **nebýt** vůbec.
+- **Teplota v uspávaném režimu proti referenci** - **reprodukováno**, ale ne uzavřeno. Dva nezávislé záznamy dávají **−0.90 °C** (23. 8., sd 0.18) a **−0.94 °C** (28. 8., sd 0.02), takže o šum jednoho měření nejde. Čí ta chyba je, rozhodnuté není - sedí uvnitř součtu katalogových nejistot (BMP180 ±1, teploměr ±0.5) a je to nejspíš pokaždé ten samý teploměr na tom samém místě. Rozhodne až **druhý referenční teploměr**, nebo prohození míst krabičky a teploměru (musí se otočit znaménko). A **pořád není zapsané, který teploměr to je** - u obou záznamů.
+- ~~Sepnutí nabíjení v uspávaném režimu~~ **HOTOVO**, viz `2026-08-28-cesta-nabijeni-a-chladnuti/` výš - příznak sepnul **13 min** po zapojení nabíječky, na prvním probuzení, kde to pravidlo vůbec spočítat mohlo, krokem +43.6 mV proti prahu +20. Vypnul 41 min po odpojení. Nejmenší krok za celé nabíjení byl 35 mV, tedy 1.75× nad prahem.
+- **Vlnovka na displeji** - **částečně**. Že na nahřáté krabičce **je**, ověřil `2026-08-28-cesta-nabijeni-a-chladnuti/` (vidět po celou dobu nabíjení). Otevřené zůstávají dvě věci: že po vypršení okna **zmizí** (ve 23:08 byla ještě vidět, i když čítač měl být na capu už od 22:59 - nejspíš se odečítala stránka, která má vlnovku z jiného důvodu), a že se na **studené** krabičce neobjeví vůbec. Odečítat se to musí na stránce **TEPLOTA 2** a **aspoň 10 s po zmáčknutí tlačítka**: VLHKOST má v uspávaném režimu vlnovku vždycky a CO2 i TEPLOTA ji mají prvních pár vteřin po probuzení.
+- **Návrh: `step <= 0` místo `step < 0` při uvolnění nabíjení** - když medián zopakuje bit-identickou hodnotu, vyjde krok přesně 0, spadne do větve "ani pokles" a vynuluje čítač potvrzení. Stalo se to v `2026-08-28-cesta-nabijeni-a-chladnuti/` a odsunulo to vypnutí o jedno probuzení. Přesná nula nevzniká jinak než tímhle způsobem, takže je změna bezpečná - ale je to zásah do firmwaru na základě jednoho výskytu, tak zatím jen zapsaný.
 - **Teplota a vlhkost ze SCD41 v uspávaném režimu** - obojí je tam trvale `unknown`, protože `SCD41_SETTLE_MS` je 3 min proti ~25 s vzhůru. Dnes je to vědomé a zdokumentované, ale znamená to, že jediný zdroj teploty v CESTA je BMP180. Jestli se s tím má něco dělat, není rozhodnuté.
