@@ -2,7 +2,7 @@
 
 Tento dokument je určen pro AI asistenta, který na projektu pokračuje po mně. Shrnuje celou historii, klíčová rozhodnutí, aktuální stav firmwaru a otevřené věci. Ostatní soubory v tomhle balíčku (README.md, WIRING.md, ASSEMBLY.md, air-quality-monitor.yaml) jsou aktuální projektová dokumentace/kód - tenhle dokument je navíc, jako kontext a historie k nim.
 
-**Poslední aktualizace:** srpen 2026, po hardwarovém ověření oprav uspávaného režimu (`data/2026-08-23-cesta-po-oprave/`).
+**Poslední aktualizace:** 29. 8. 2026. Firmware je označený za **stabilní a nasazený**; soupis toho, co zůstává nedodělané, je v sekci „STAV K 29. 8. 2026“ hned pod v2 STATUS.
 
 ---
 
@@ -132,6 +132,108 @@ s připojenou nabíječkou a chování vlnovky. Původní popis pro kontext:
 3. ~~ASSEMBLY.md pořád popisuje starý (v1) kryt~~ **HOTOVO (srpen 2026).** Přepsáno na v2 podle popisu od uživatele: PETG místo PLA, větší kryt, spodní kompartment pro oba teplotní senzory (zatavuje se záklopkou), tlačítko se symbolem napájení natavené přímo na přední kryt, TP4056 podél baterky místo pod ní, anténa nahoře vepředu místo dole pod sestavou. Přidán i nový obrázek `images/v2.webp` a model `enclosure/case v2.3mf`. Postup je psaný z textového popisu, ne z vlastního sestavení - pár míst je označených jako neověřených, viz konec ASSEMBLY.md.
 4. ~~Git: v2 změny jsou jen lokální~~ **PUSHNUTO (srpen 2026)** - na výslovné vyžádání uživatele, 30 commitů jako čistý fast-forward do `github.com/Spagy69/ESP32-C3-Air-Quality-Monitor` (`main`). **Pravidlo v CLAUDE.md platí dál: nepushovat, commitovat jen lokálně, push až na výslovné vyžádání.** Tohle bylo jednorázové svolení, ne trvalé.
 5. ~~HANDOFF.md v gitu~~ **ROZHODNUTO (srpen 2026): ano**, je teď součástí repa.
+
+---
+
+## STAV K 29. 8. 2026: STABLE, co zbývá
+
+**Uživatel označil firmware za stabilní a nasazený.** Tahle sekce je proto
+psaná jako soupis toho, co **není** dodělané - ne jako seznam blokujících
+chyb. Nic z toho nebrání běžnému používání; přehled hotových věcí je v
+sekci v2 STATUS výš, jednotlivé záznamy pak v [`data/README.md`](data/README.md).
+
+Firmware se od commitu `4812014` nezměnil (od té doby jen dokumentace a
+data), takže `esphome config` + `compile` z té doby pořád platí. Všech pět
+hardwarových testů k opravám uspávaného režimu prošlo, dohromady přes 38
+probuzení ve dvou nezávislých záznamech - detaily v bodu 8 v seznamu
+otevřených úkolů níž.
+
+### 1. CO2 alarm nikdy neviděl nikdo sepnout
+
+**Jediná funkce firmwaru, u které chybí důkaz, že se chová správně.** Ne že
+by selhala - prostě se ji zatím nepovedlo vyvolat. Dva pokusy:
+
+- `data/2026-08-22-breath-test/` (DOMA, vzhůru): 5038 ppm, přes práh
+  **6.5 minuty**, armovací pravidlo splněné. Alarm nejspíš sepnul, ale
+  `co2_alarm_active` se do HA nepublikuje, takže **v exportu po tom není
+  ani stopa** a zpětně to ověřit nejde.
+- `data/2026-08-28-co2-dychnuti-v-cesta/` (CESTA, ve spánku): armování
+  prošlo (pět čtení, rozptyl 9 ppm proti prahu 150), ale do prahu 3000
+  **chybělo 695 ppm**. Jedno dýchnutí zvedne hladinu asi o 1400 ppm,
+  potřeba je 1850.
+
+Riziko z toho je malé: alarm umí jen rozsvítit displej a přes `stay_on`
+zablokovat uspání, nemůže nic rozbít ani nic přepsat. Ale dokud nesepne, je
+to nedopsaná funkce.
+
+**Jak to zavřít:** několik dýchnutí po sobě a skončit chvíli před
+probuzením (τ vydýchaného vzduchu v krabičce je ~8.9 min, takže se stačí
+trefit do jednoho intervalu). Pozná se to tak, že zařízení **nezhasne a
+nezaspí**, dokud CO2 nespadne pod 2700. Rozumné je napřed udělat bod 6
+níž, jinak zase zůstane jen dojem z displeje.
+
+### 2. Dělič napětí ve spodku rozsahu
+
+Násobič 3.2 je ověřený ve **dvou bodech**: 4.15 V a 3.81 V. Zbývá odečet
+kolem **3.5 V a níž** - tam by se nelinearita ADC projevila nejvíc, a je to
+zároveň přesně pásmo, na kterém by stálo varování před vybitím (bod 5).
+
+Podmínky, aby to bylo srovnatelné s 28. 8.: sonda na **B+ přímo na
+baterce**, černá na **GND XIAO** (stejná zem, proti které měří ADC),
+krabička v **CESTA** s rozsvíceným displejem v režimu **STAY**, nabíječka
+**odpojená**.
+
+### 3. Vlnovka na studené krabičce
+
+Poslední neuzavřený test celé série. Nahřátá krabička prošla
+(`2026-08-28-cesta-nabijeni-a-chladnuti/`: vlnovka je po celou dobu
+nabíjení a po vypršení okna zmizí); zbývá druhá strana - **na studené se
+objevit nesmí vůbec**.
+
+Postup: vypnout na hodinu, zapnout, **hned** přepnout na CESTA (do 5 min,
+než vyprší `WARMUP_MS`), nechat zaspat, počkat na první probuzení
+časovačem, zmáčknout tlačítko, počkat **aspoň 10 s** a číst **TEPLOTA 2**
+(BMP180). Ten odstup i ta stránka jsou podstatné: VLHKOST má v uspávaném
+režimu vlnovku vždycky a CO2 i TEPLOTA ji mají prvních pár vteřin po
+probuzení z titulu `stale`.
+
+### 4. ASC toggle na hardwaru
+
+Implementovaný přes raw I2C (`0x2416`), položka **ASC KALIBRACE** v menu,
+aplikuje se až při dalším bootu. **Nikdy nezkoušený.** Ověření chce dočasně
+zvednout `logger: level` z `NONE` a po přepnutí zkontrolovat log při dalším
+bootu (žádné I2C chyby, CO2 čtení pokračují). Riziko je malé a přínos taky -
+klidně to může zůstat neověřené.
+
+### 5. Druhý referenční teploměr
+
+Jediná cesta, jak zavřít rozdíl **0.94 °C mezi DOMA a CESTA**. Není to
+porucha, je to nerozhodnutá otázka, který z těch dvou režimů má pravdu:
+`b − e = −0.94` se z jednoho přístroje na chybu senzoru a chybu teploměru
+rozdělit nedá a **další odečty tím samým teploměrem už nic nerozhodnou**.
+Chce to druhý kus (nejlépe jiného typu), nebo prohodit místa krabičky a
+teploměru - pak se musí otočit znaménko. Odvození je v
+`data/2026-08-28-cesta-nabijeni-a-chladnuti/reference-thermometer.md`.
+
+### 6. Nedokončené návrhy (nové funkce, ne opravy)
+
+- **Vystavit `co2_alarm_active` jako `binary_sensor`** - viz bod 10 v
+  otevřených úkolech. Přímo kvůli tomu se nedá ověřit bod 1; rozumné je
+  udělat to **před** dalším pokusem o alarm.
+- **Lokální varování na slabou baterku na displeji** - viz bod 9. V
+  opravdové CESTA je WiFi vypnutá, takže HA notifikace tam dorazit nemůže a
+  displej je jediný zbývající kanál; dnes na něm slabá baterka nijak
+  nevyčnívá.
+
+### 7. Vědomě nechané tak
+
+- **Teplota a vlhkost ze SCD41 jsou v CESTA trvale `unknown`**
+  (`SCD41_SETTLE_MS` 3 min proti ~25 s vzhůru). Teplotu dodá BMP180, který
+  transient nemá vůbec; vlhkost druhý zdroj nemá. Zdokumentované, měnit se
+  to zatím nebude.
+- **`CHARGE_OFFSET_*` zůstávají `0.0`** - dva záznamy nabíjení dokazují, že
+  ta konstanta neexistuje (+3.7 °C z prázdné baterky, +2.35 °C ze 64 %).
+  Značí se to vlnovkou místo opravy.
 
 ---
 
